@@ -11,8 +11,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
-from room_to_floorplan.model import FloorplanUNet
-
+# add unet++ below
+from room_to_floorplan.model import FloorplanUNet, FloorplanUNetAttention
 
 class BEVDataset(Dataset):
     def __init__(self, root: str):
@@ -297,6 +297,9 @@ def main():
     ap.add_argument("--threshold", type=float, default=0.5)
     ap.add_argument("--resume", type=str, default=None,
                     help="Path to a saved checkpoint .pt file to continue training from")
+    # add unet++ in the code below
+    ap.add_argument("--model", type=str, default="unet", choices=["unet", "unet_attention"],
+                    help="Model type to train: unet or unet_attention")
     args = ap.parse_args()
 
     print("=" * 80)
@@ -308,6 +311,7 @@ def main():
     print(f"Threshold : {args.threshold}")
     print(f"Output dir: {args.output_dir}")
     print(f"Resume checkpoint: {args.resume}")
+    print(f"[MODEL] Using architecture: {args.model}")
     print("=" * 80)
 
     out = Path(args.output_dir)
@@ -345,7 +349,15 @@ def main():
         print(f"[CUDA] Device name : {torch.cuda.get_device_name(0)}")
     print("=" * 80)
 
-    model = FloorplanUNet().to(device)
+    # model = FloorplanUNet().to(device)
+    # Passing the argument to select the model
+    if args.model == "unet":
+        model = FloorplanUNet().to(device)
+    elif args.model == "unet_attention":
+        model = FloorplanUNetAttention().to(device)
+    else:
+        raise ValueError(f"Unknown model type: {args.model}")
+    
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     best_val = float("inf")
