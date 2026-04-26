@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
 # add unet++ below
-from room_to_floorplan.model import FloorplanUNet, FloorplanUNetAttention
+from room_to_floorplan.model import FloorplanUNet, FloorplanUNetAttention, FloorplanUNetPlusPlus
 
 class BEVDataset(Dataset):
     def __init__(self, root: str):
@@ -355,6 +355,8 @@ def main():
         model = FloorplanUNet().to(device)
     elif args.model == "unet_attention":
         model = FloorplanUNetAttention().to(device)
+    elif args.model == "unet_plusplus":
+        model = FloorplanUNetPlusPlus().to(device)
     else:
         raise ValueError(f"Unknown model type: {args.model}")
     
