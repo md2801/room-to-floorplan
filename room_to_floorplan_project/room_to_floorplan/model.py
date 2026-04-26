@@ -142,3 +142,74 @@ class FloorplanUNetAttention(nn.Module):
         x = self.c1(torch.cat([x, d1_att], dim=1))
 
         return self.head(x)
+
+class FloorplanUNetPlusPlus(nn.Module):
+    def __init__(self, in_channels: int=6, out_channels:int=2, base:int=32, deep_supervision: bool=False):
+        super().__init__()
+        self.deep_supervision = deep_supervision
+        b = base
+
+        # Encoder
+        self.d1 = ConvBlock(in_channels, b)
+        self.d2 = ConvBlock(b, b * 2)
+        self.d3 = ConvBlock(b * 2, b * 4)
+        self.pool = nn.MaxPool2d(2)
+
+        # Bottleneck
+        self.mid = ConvBlock(b * 4, b * 8)
+
+        # up0: b*2  → b,    up1: b*4  → b*2,   up2: b*8 → b*4
+        self.up0 = nn.ConvTranspose2d(b * 2, b, 2, 2)
+        self.up1 = nn.ConvTranspose2d(b * 4, b * 2, 2, 2)
+        self.up2 = nn.ConvTranspose2d(b * 8, b * 4, 2, 2)
+
+        # Column 1 nodes
+        self.c01 = ConvBlock(b * 2,  b)
+        self.c11 = ConvBlock(b * 4,  b * 2)
+        self.c21 = ConvBlock(b * 8,  b * 4)
+
+        # Column 2 nodes
+        self.c02 = ConvBlock(b * 3,  b)
+        self.c12 = ConvBlock(b * 6,  b * 2)
+
+        # Column 3 nodes
+        self.c03 = ConvBlock(b * 4,  b)
+
+        # Output head(s)
+        if deep_supervision:
+            self.heads = nn.ModuleList([
+                nn.Conv2d(b, out_channels, 1) for _ in range(3)
+            ])
+        else:
+            self.head = nn.Conv2d(b, out_channels, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+
+        # Encoder
+        x00 = self.d1(x)
+        x10 = self.d2(self.pool(x00))
+        x20 = self.d3(self.pool(x10))
+        x30 = self.mid(self.pool(x20))
+
+        # Column 1
+        x21 = self.c21(torch.cat([self.up2(x30), x20], dim=1))
+        x11 = self.c11(torch.cat([self.up1(x20), x10], dim=1))
+        x01 = self.c01(torch.cat([self.up0(x10), x00], dim=1))
+
+        # Column 2
+        x12 = self.c12(torch.cat([self.up1(x21), x10, x11], dim=1))
+        x02 = self.c02(torch.cat([self.up0(x11), x00, x01], dim=1))
+
+        # Column 3
+        x03 = self.c03(torch.cat([self.up0(x12), x00, x01, x02], dim=1))
+
+        # Output
+        if self.deep_supervision:
+            preds = [
+                self.heads[0](x01),
+                self.heads[1](x02),
+                self.heads[2](x03)
+            ]
+            return torch.mean(torch.stack(preds, dim=0), dim=0)
+
+        return self.head(x03)
