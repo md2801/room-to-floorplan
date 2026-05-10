@@ -1,10 +1,8 @@
-dataset
+dataset/
+output/
+project_input/
 *.zip
-output
-project_input
-../.ipynb_checkpoints/
-.ipynb_checkpoints/infer_floorplan_from_panorama-checkpoint.py
-.ipynb_checkpoints/infer_floorplan_from_scene-checkpoint.py
-.ipynb_checkpoints/requirements-checkpoint.txt
-infer_floorplan_from_panorama.py
-infer_floorplan_from_scene.py
+
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
