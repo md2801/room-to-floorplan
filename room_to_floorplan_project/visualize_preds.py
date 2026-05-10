@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from room_to_floorplan.model import FloorplanUNet
+from room_to_floorplan.model import FloorplanUNet, FloorplanUNetAttention, FloorplanUNetPlusPlus
 
 import matplotlib
 matplotlib.use("Agg")
@@ -48,12 +48,23 @@ class BEVDataset(Dataset):
 def load_model_from_checkpoint(checkpoint_path: Path, device: str):
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
-    model = FloorplanUNet().to(device)
+    ckpt_str = str(checkpoint_path).lower()
+
+    if "unet++" in ckpt_str or "unetplusplus" in ckpt_str or "unetpp" in ckpt_str:
+        print("[MODEL] Using FloorplanUNetPlusPlus")
+        model = FloorplanUNetPlusPlus().to(device)
+
+    elif "attention" in ckpt_str or "unetattention" in ckpt_str:
+        print("[MODEL] Using FloorplanUNetAttention")
+        model = FloorplanUNetAttention().to(device)
+
+    else:
+        print("[MODEL] Using FloorplanUNet")
+        model = FloorplanUNet().to(device)
 
     if "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
-        # fallback in case an older checkpoint only stored raw state_dict
         model.load_state_dict(checkpoint)
 
     model.eval()

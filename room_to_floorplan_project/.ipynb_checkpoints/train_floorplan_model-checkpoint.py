@@ -9,10 +9,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, random_split
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
-from room_to_floorplan.model import FloorplanUNet
-
+from room_to_floorplan.model import FloorplanUNet, FloorplanUNetAttention, FloorplanUNetPlusPlus
 
 class BEVDataset(Dataset):
     def __init__(self, root: str):
@@ -226,6 +225,7 @@ def plot_training_curves(hist, out_path: Path):
     plt.figure(figsize=(10, 6))
     plt.plot(epochs, [h["train_loss"] for h in hist], label="Train Loss")
     plt.plot(epochs, [h["val_loss"] for h in hist], label="Val Loss")
+    plt.plot(epochs, [h["test_loss"] for h in hist], label="Test Loss")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.title("Training and Validation Loss")
@@ -243,6 +243,8 @@ def plot_metric_curves(hist, out_path: Path):
     plt.plot(epochs, [h["val_overall_iou"] for h in hist], label="Val Overall IoU")
     plt.plot(epochs, [h["val_structure_dice"] for h in hist], label="Val Structure Dice")
     plt.plot(epochs, [h["val_furniture_dice"] for h in hist], label="Val Furniture Dice")
+    plt.plot(epochs, [h["test_overall_dice"] for h in hist], label="Test Overall Dice")
+    plt.plot(epochs, [h["test_overall_iou"] for h in hist], label="Test Overall IoU")
     plt.xlabel("Epoch")
     plt.ylabel("Metric")
     plt.title("Validation Metrics Over Epochs")
@@ -287,65 +289,60 @@ def load_checkpoint(
     return checkpoint, start_epoch, best_val
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data-dir", required=True)
-    ap.add_argument("--epochs", type=int, default=20)
-    ap.add_argument("--batch-size", type=int, default=4)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--output-dir", required=True)
-    ap.add_argument("--threshold", type=float, default=0.5)
-    ap.add_argument("--resume", type=str, default=None,
-                    help="Path to a saved checkpoint .pt file to continue training from")
-    args = ap.parse_args()
+def evaluate_model(model, data_loader, device, threshold, split_name):
+    model.eval()
+    metric_sums = init_metric_sums()
 
-    print("=" * 80)
-    print("TRAIN FLOORPLAN MODEL")
-    print(f"Data dir: {args.data_dir}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Batch size: {args.batch_size}")
-    print(f"LR: {args.lr}")
-    print(f"Threshold : {args.threshold}")
-    print(f"Output dir: {args.output_dir}")
-    print(f"Resume checkpoint: {args.resume}")
-    print("=" * 80)
-
-    out = Path(args.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
-    ds = BEVDataset(args.data_dir)
-    if len(ds) == 0:
-        print("[FATAL] Dataset is empty. No training can be performed.")
-        return
-
-    summarize_dataset_shapes(ds)
-
-    n_val = max(1, int(0.2 * len(ds)))
-    n_train = max(1, len(ds) - n_val)
-
-    print("[SPLIT]")
-    print(f"Total : {len(ds)}")
-    print(f"Train : {n_train}")
-    print(f"Val   : {n_val}")
-    print("=" * 80)
-
-    train_ds, val_ds = random_split(
-        ds,
-        [n_train, n_val],
-        generator=torch.Generator().manual_seed(42),
+    bar = tqdm(
+        data_loader,
+        desc=split_name,
+        dynamic_ncols=True,
+        leave=False,
     )
 
-    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-    val_dl = DataLoader(val_ds, batch_size=args.batch_size)
+    with torch.no_grad():
+        for batch in bar:
+            x = batch["x"].to(device)
+            y = batch["y"].to(device)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[DEVICE] {device}")
-    if device == "cuda":
-        print(f"[CUDA] Device count: {torch.cuda.device_count()}")
-        print(f"[CUDA] Device name : {torch.cuda.get_device_name(0)}")
+            logits = model(x)
+
+            bce = F.binary_cross_entropy_with_logits(logits, y)
+            d_loss = dice_loss(logits, y)
+            loss = bce + d_loss
+
+            metric_dict = compute_segmentation_metrics_from_logits(
+                logits, y, threshold=threshold
+            )
+
+            update_metric_sums(metric_sums, loss, bce, d_loss, metric_dict)
+
+            running = finalize_metric_sums(metric_sums)
+            bar.set_postfix({
+                "loss": f"{running['loss']:.4f}",
+                "dice": f"{running['overall_dice']:.4f}",
+                "iou": f"{running['overall_iou']:.4f}",
+            })
+
+    return finalize_metric_sums(metric_sums)
+
+
+def train_one_model(model_name, args, train_dl, val_dl, test_dl, device):
+    out = Path(args.output_dir) / model_name
+    out.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 80)
+    print(f"TRAINING MODEL: {model_name}")
+    print(f"Output dir: {out}")
     print("=" * 80)
 
-    model = FloorplanUNet().to(device)
+    model = build_model(model_name, device)
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    best_val = float("inf")
+    hist = []
+    start_epoch = 0
+
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     best_val = float("inf")
@@ -365,8 +362,8 @@ def main():
         )
         print("[RESUME]")
         print(f"Loaded checkpoint: {ckpt_path}")
-        print(f"Start epoch      : {start_epoch + 1}")
-        print(f"Best val loss    : {best_val:.6f}")
+        print(f"Start epoch: {start_epoch + 1}")
+        print(f"Best val loss: {best_val:.6f}")
         print("=" * 80)
 
         history_path = out / "history.json"
@@ -381,7 +378,14 @@ def main():
         model.train()
         train_sums = init_metric_sums()
 
-        train_bar = tqdm(train_dl, desc=f"train {epoch + 1}/{args.epochs}")
+        train_bar = tqdm(
+            train_dl, 
+            desc=f"train {epoch + 1}/{args.epochs}",
+            dynamic_ncols=True,
+            leave=False,
+            # ascii=True
+        )
+
         for batch in train_bar:
             x = batch["x"].to(device)
             y = batch["y"].to(device)
@@ -410,34 +414,21 @@ def main():
 
         train_metrics = finalize_metric_sums(train_sums)
 
-        model.eval()
-        val_sums = init_metric_sums()
+        val_metrics = evaluate_model(
+            model=model,
+            data_loader=val_dl,
+            device=device,
+            threshold=args.threshold,
+            split_name=f"val   {epoch + 1}/{args.epochs}",
+        )
 
-        val_bar = tqdm(val_dl, desc=f"val   {epoch + 1}/{args.epochs}")
-        with torch.no_grad():
-            for batch in val_bar:
-                x = batch["x"].to(device)
-                y = batch["y"].to(device)
-
-                logits = model(x)
-
-                bce = F.binary_cross_entropy_with_logits(logits, y)
-                d_loss = dice_loss(logits, y)
-                loss = bce + d_loss
-
-                metric_dict = compute_segmentation_metrics_from_logits(
-                    logits, y, threshold=args.threshold
-                )
-                update_metric_sums(val_sums, loss, bce, d_loss, metric_dict)
-
-                running = finalize_metric_sums(val_sums)
-                val_bar.set_postfix({
-                    "loss": f"{running['loss']:.4f}",
-                    "dice": f"{running['overall_dice']:.4f}",
-                    "iou": f"{running['overall_iou']:.4f}",
-                })
-
-        val_metrics = finalize_metric_sums(val_sums)
+        test_metrics = evaluate_model(
+            model=model,
+            data_loader=test_dl,
+            device=device,
+            threshold=args.threshold,
+            split_name=f"test  {epoch + 1}/{args.epochs}",
+        )
 
         hist_entry = {
             "epoch": epoch + 1,
@@ -476,18 +467,41 @@ def main():
             "val_furniture_dice": val_metrics["furniture_dice"],
             "val_furniture_iou": val_metrics["furniture_iou"],
             "val_furniture_pixel_acc": val_metrics["furniture_pixel_acc"],
+
+            "test_loss": test_metrics["loss"],
+            "test_bce": test_metrics["bce"],
+            "test_dice_loss": test_metrics["dice_loss"],
+            "test_overall_precision": test_metrics["overall_precision"],
+            "test_overall_recall": test_metrics["overall_recall"],
+            "test_overall_f1": test_metrics["overall_f1"],
+            "test_overall_dice": test_metrics["overall_dice"],
+            "test_overall_iou": test_metrics["overall_iou"],
+            "test_overall_pixel_acc": test_metrics["overall_pixel_acc"],
+            "test_structure_precision": test_metrics["structure_precision"],
+            "test_structure_recall": test_metrics["structure_recall"],
+            "test_structure_f1": test_metrics["structure_f1"],
+            "test_structure_dice": test_metrics["structure_dice"],
+            "test_structure_iou": test_metrics["structure_iou"],
+            "test_structure_pixel_acc": test_metrics["structure_pixel_acc"],
+            "test_furniture_precision": test_metrics["furniture_precision"],
+            "test_furniture_recall": test_metrics["furniture_recall"],
+            "test_furniture_f1": test_metrics["furniture_f1"],
+            "test_furniture_dice": test_metrics["furniture_dice"],
+            "test_furniture_iou": test_metrics["furniture_iou"],
+            "test_furniture_pixel_acc": test_metrics["furniture_pixel_acc"],
         }
         hist.append(hist_entry)
 
         print(
             f"[EPOCH {epoch + 1:02d}] "
             f"train_loss={train_metrics['loss']:.6f} "
-            f"val_loss={val_metrics['loss']:.6f} | "
+            f"val_loss={val_metrics['loss']:.6f} "
+            f"test_loss={test_metrics['loss']:.6f} | "
             f"val_dice={val_metrics['overall_dice']:.4f} "
+            f"test_dice={test_metrics['overall_dice']:.4f} | "
             f"val_iou={val_metrics['overall_iou']:.4f} "
-            f"val_f1={val_metrics['overall_f1']:.4f} | "
-            f"struct_dice={val_metrics['structure_dice']:.4f} "
-            f"furn_dice={val_metrics['furniture_dice']:.4f}"
+            f"test_iou={test_metrics['overall_iou']:.4f} | "
+            f"test_f1={test_metrics['overall_f1']:.4f}"
         )
 
         history_path = out / "history.json"
@@ -500,7 +514,7 @@ def main():
             opt,
             epoch=epoch,
             best_val=best_val,
-            args_dict=vars(args),
+            args_dict={**vars(args), "model": model_name},
         )
 
         if val_metrics["loss"] < best_val:
@@ -512,7 +526,7 @@ def main():
                 opt,
                 epoch=epoch,
                 best_val=best_val,
-                args_dict=vars(args),
+                args_dict={**vars(args), "model": model_name},
             )
             print(f"[CHECKPOINT] Saved best model -> {best_ckpt_path}")
 
@@ -537,6 +551,106 @@ def main():
     print(f"Last checkpoint saved: {out / 'last.pt'}")
     print(f"Best checkpoint saved: {out / 'best.pt'}")
     print("=" * 80)
+
+
+def build_model(model_name: str, device: str):
+    if model_name == "unet":
+        return FloorplanUNet().to(device)
+    elif model_name == "unetattention":
+        return FloorplanUNetAttention().to(device)
+    elif model_name == "unetplusplus":
+        return FloorplanUNetPlusPlus().to(device)
+    else:
+        raise ValueError(f"Unknown model type: {model_name}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data-dir", required=True)
+    ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--batch-size", type=int, default=4)
+    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--output-dir", required=True)
+    ap.add_argument("--threshold", type=float, default=0.5)
+    ap.add_argument("--resume", type=str, default=None, help="Path to a saved checkpoint .pt file to continue training from")
+    ap.add_argument(
+        "--models",
+        nargs="+",
+        default=["unet"],
+        choices=["unet", "unetattention", "unetplusplus"],
+        help="One or more model types to train"
+    )
+    args = ap.parse_args()
+
+    print("=" * 80)
+    print("TRAIN FLOORPLAN MODEL")
+    print(f"Data dir: {args.data_dir}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Batch size: {args.batch_size}")
+    print(f"LR: {args.lr}")
+    print(f"Threshold: {args.threshold}")
+    print(f"Output dir: {args.output_dir}")
+    print(f"Resume checkpoint: {args.resume}")
+    print(f"Using CNN architecture: {args.models}")
+    print("=" * 80)
+
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    ds = BEVDataset(args.data_dir)
+    if len(ds) == 0:
+        print("[FATAL] Dataset is empty. No training can be performed.")
+        return
+
+    summarize_dataset_shapes(ds)
+
+    n_val = max(1, int(0.2 * len(ds)))
+    n_train = max(1, len(ds) - n_val)
+
+    n_total = len(ds)
+
+    n_test = max(1, int(0.15 * n_total))
+    n_val = max(1, int(0.15 * n_total))
+    n_train = n_total - n_val - n_test
+
+    if n_train <= 0:
+        raise ValueError(
+            f"Dataset too small for train/val/test split. Total samples: {n_total}"
+        )
+
+    print("[SPLIT]")
+    print(f"Total: {n_total}")
+    print(f"Train: {n_train}")
+    print(f"Val: {n_val}")
+    print(f"Test: {n_test}")
+    print("=" * 80)
+
+    train_ds, val_ds, test_ds = random_split(
+        ds,
+        [n_train, n_val, n_test],
+        generator=torch.Generator().manual_seed(42),
+    )
+
+    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    val_dl = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
+    test_dl = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[DEVICE] {device}")
+    if device == "cuda":
+        print(f"[CUDA] Device count: {torch.cuda.device_count()}")
+        print(f"[CUDA] Device name: {torch.cuda.get_device_name(0)}")
+    print("=" * 80)
+
+    for model_name in args.models:
+        train_one_model(
+            model_name=model_name,
+            args=args,
+            train_dl=train_dl,
+            val_dl=val_dl,
+            test_dl=test_dl,
+            device=device,
+        )
 
 
 if __name__ == "__main__":
