@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-"""Scene-level Structured3D utilities for RoomToFP.
+"""
+Scene-level Structured3D utilities for RoomToFP.
 
 Inspired by RoomFormer-style scene fusion: use all available panorama RGB-D evidence
 from a Structured3D scene, fuse it into a shared world coordinate frame, then project
-it into a top-down BEV representation. This is custom project code and does not depend
-on the old U-Net inference scripts.
+it into a top-down BEV representation
 """
 
 import json

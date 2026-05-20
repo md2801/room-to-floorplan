@@ -6,3 +6,5 @@ project_input/
 .ipynb_checkpoints/
 __pycache__/
 *.pyc
+.venv
+.idea

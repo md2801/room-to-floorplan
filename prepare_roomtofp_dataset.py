@@ -62,7 +62,7 @@ def find_scene_dirs(root: Path) -> list[Path]:
 
 def canonicalize_polygon_pixels(points: np.ndarray, max_corners: int | None = None, simplify_eps_px: float = 1.0) -> np.ndarray:
     """
-    Improvement v4: normalise target polygon vertices before padding/rasterising.
+    Improvement v4.1: normalise target polygon vertices before padding/rasterising.
     This removes duplicate points, simplifies tiny zigzags, enforces a consistent clockwise order, and starts the sequence at the top-left-most corner.
     Cleaner target sequences are critical for RoomFormer-like ordered polygon learning.
     """
@@ -131,7 +131,7 @@ def pad_polygons(
         pts[:, 0] /= max(1, grid_size - 1)
         pts[:, 1] /= max(1, grid_size - 1)
 
-        # limiting num of corners after Improvement v4 canonicalisation/uniform downsampling
+        # limiting num of corners after Improvement v4.1 canonicalisation/uniform downsampling
         n = min(len(pts), max_corners)
         corners[ri, :n] = pts[:n]  # stores first n corner coords in fixed-sized array
         corner_valid[ri, :n] = 1.0  # marking valid corners

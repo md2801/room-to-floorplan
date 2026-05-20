@@ -264,6 +264,11 @@ class LossConfig:
     polygon_angle_weight: float = 0.20  # Improvement v4: encourages clean Manhattan-like turns and discourages jagged polygon sequences.
     polygon_area_weight: float = 0.35  # Improvement v4: matches room area so polygons do not collapse even when individual corners are close.
     room_overlap_weight: float = 0.10  # Improvement v4: discourages multiple room query masks from covering the same room area.
+    # Improvement v5: directly supervise the predicted polygon shape by softly rasterising corner_xy and comparing it to the GT room mask, RoomFormer-style.
+    polygon_raster_weight: float = 1.0
+    polygon_raster_size: int = 64
+    # Improvement v5: apply a smaller version of polygon losses to intermediate decoder outputs.
+    aux_decoder_weight: float = 0.35
     boundary_weight: float = 0.15  # Improvement v3: edge loss inside mask loss encourages sharper wall/opening boundaries.
     room_pos_weight_max: float = 8.0  # Improvement v3: positive weighting prevents empty room slots/background from dominating.
     dice_weight: float = 1.0  # controls how much dice loss contributes when using bce_dice or focal_dice; focuses on overlap between preds and true foreground
@@ -296,6 +301,9 @@ def _cfg_from_args(args: Any | None) -> LossConfig:
         polygon_angle_weight=float(getattr(args, "polygon_angle_weight", 0.20)),
         polygon_area_weight=float(getattr(args, "polygon_area_weight", 0.35)),
         room_overlap_weight=float(getattr(args, "room_overlap_weight", 0.10)),
+        polygon_raster_weight=float(getattr(args, "polygon_raster_weight", 1.0)),
+        polygon_raster_size=int(getattr(args, "polygon_raster_size", 64)),
+        aux_decoder_weight=float(getattr(args, "aux_decoder_weight", 0.35)),
         boundary_weight=float(getattr(args, "boundary_weight", 0.15)),
         room_pos_weight_max=float(getattr(args, "room_pos_weight_max", 8.0)),
         dice_weight=float(getattr(args, "dice_weight", 1.0)),
@@ -446,6 +454,156 @@ def _room_query_mask_loss(logits: torch.Tensor, target: torch.Tensor, room_valid
     if not per_room:
         return torch.zeros((), device=logits.device, dtype=logits.dtype)
     return torch.stack(per_room).mean()
+
+
+
+def _soft_triangle_mask(tri: torch.Tensor, grid_xy: torch.Tensor, sharpness: float = 140.0) -> torch.Tensor:
+    """
+    Improvement v5: differentiable soft rasterisation primitive.
+
+    tri: [3,2] normalised xy vertices. grid_xy: [S,S,2] normalised xy sample grid.
+    Returns a soft inside mask for the triangle. This is a lightweight substitute for
+    RoomFormer's differentiable polygon rasterisation and keeps gradients flowing into corner_xy.
+    """
+    a, b, c = tri[0], tri[1], tri[2]
+    area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    orient = torch.where(area >= 0, torch.ones_like(area), -torch.ones_like(area))
+
+    def edge(p0: torch.Tensor, p1: torch.Tensor) -> torch.Tensor:
+        return orient * ((p1[0] - p0[0]) * (grid_xy[..., 1] - p0[1]) - (p1[1] - p0[1]) * (grid_xy[..., 0] - p0[0]))
+
+    e0 = torch.sigmoid(sharpness * edge(a, b))
+    e1 = torch.sigmoid(sharpness * edge(b, c))
+    e2 = torch.sigmoid(sharpness * edge(c, a))
+    return e0 * e1 * e2
+
+
+def _soft_polygon_mask(poly: torch.Tensor, grid_xy: torch.Tensor) -> torch.Tensor:
+    """
+    Improvement v5: differentiably rasterise an ordered polygon into a soft mask.
+
+    The polygon is decomposed into a triangle fan around its centroid and the soft
+    triangle masks are unioned. This handles most RoomToFP room polygons well enough
+    for training pressure and is fully differentiable w.r.t. corner_xy.
+    """
+    n = int(poly.shape[0])
+    if n < 3:
+        return torch.zeros(grid_xy.shape[:2], device=poly.device, dtype=poly.dtype)
+    center = poly.mean(dim=0)
+    union = torch.zeros(grid_xy.shape[:2], device=poly.device, dtype=poly.dtype)
+    for i in range(n):
+        tri = torch.stack([center, poly[i], poly[(i + 1) % n]], dim=0)
+        tri_mask = _soft_triangle_mask(tri, grid_xy)
+        union = 1.0 - (1.0 - union) * (1.0 - tri_mask)
+    return union.clamp(0.0, 1.0)
+
+
+def _polygon_raster_loss(
+    pred_xy: torch.Tensor,
+    target_room_mask: torch.Tensor,
+    room_valid: torch.Tensor,
+    corner_valid: torch.Tensor,
+    raster_size: int = 64,
+) -> torch.Tensor:
+    """
+    Improvement v5: RoomFormer-style polygon rasterisation loss.
+
+    This loss supervises the predicted corner polygon itself. It prevents the model
+    from learning a decent room_mask_logits branch while leaving corner_xy inaccurate.
+    The target room masks are downsampled to keep training affordable.
+    """
+    if target_room_mask.ndim != 4:
+        return torch.zeros((), device=pred_xy.device, dtype=pred_xy.dtype)
+
+    s = int(max(16, raster_size))
+    target_small = F.interpolate(target_room_mask.float(), size=(s, s), mode="area").clamp(0.0, 1.0)
+    yy, xx = torch.meshgrid(
+        torch.linspace(0.0, 1.0, s, device=pred_xy.device, dtype=pred_xy.dtype),
+        torch.linspace(0.0, 1.0, s, device=pred_xy.device, dtype=pred_xy.dtype),
+        indexing="ij",
+    )
+    grid_xy = torch.stack([xx, yy], dim=-1)
+
+    losses = []
+    bsz, max_rooms, _, _ = pred_xy.shape
+    for bi in range(bsz):
+        for ri in range(max_rooms):
+            if room_valid[bi, ri] <= 0.5:
+                continue
+            n = int(corner_valid[bi, ri].sum().item())
+            if n < 3:
+                continue
+            pred_mask = _soft_polygon_mask(pred_xy[bi, ri, :n], grid_xy)
+            tgt = target_small[bi, ri]
+            inter = (pred_mask * tgt).sum()
+            denom = pred_mask.sum() + tgt.sum()
+            dice_loss = 1.0 - ((2.0 * inter + 1e-6) / (denom + 1e-6))
+            bce = F.binary_cross_entropy(pred_mask.clamp(1e-4, 1.0 - 1e-4), tgt)
+            losses.append(dice_loss + 0.25 * bce)
+
+    if not losses:
+        return torch.zeros((), device=pred_xy.device, dtype=pred_xy.dtype)
+    return torch.stack(losses).mean()
+
+
+def _polygon_supervision_terms(pred: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], cfg: LossConfig) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Shared polygon-only supervision used by the final output and auxiliary decoder outputs."""
+    room_valid = batch["room_valid"]
+    corner_valid = batch["corner_valid"]
+    valid_logits = pred["room_valid_logits"]
+    corner_logits = pred["corner_valid_logits"]
+    xy = pred["corner_xy"]
+    target_xy = batch["polygon_xy"]
+
+    room_bce = _balanced_bce_with_logits(valid_logits, room_valid, max_pos_weight=cfg.room_pos_weight_max)
+    corner_raw = F.binary_cross_entropy_with_logits(corner_logits, corner_valid, reduction="none")
+    corner_room_mask = room_valid.unsqueeze(-1)
+    corner_bce = (corner_raw * corner_room_mask).sum() / (corner_room_mask.sum() * corner_valid.shape[-1]).clamp_min(1.0)
+
+    mask = (room_valid.unsqueeze(-1) * corner_valid).unsqueeze(-1)
+    coord_l1 = (torch.abs(xy - target_xy) * mask).sum() / mask.sum().clamp_min(1.0)
+    edge_l1 = _polygon_edge_l1(xy, target_xy, room_valid, corner_valid)
+    area_l1 = _polygon_area_l1(xy, target_xy, room_valid, corner_valid)
+    angle_loss = _polygon_angle_loss(xy, room_valid, corner_valid)
+
+    class_loss = F.cross_entropy(
+        pred["room_class_logits"].flatten(0, 1),
+        batch["room_class"].flatten(),
+        reduction="none",
+    )
+    class_loss = (class_loss.view_as(room_valid) * room_valid).sum() / room_valid.sum().clamp_min(1.0)
+
+    polygon_raster = torch.zeros((), device=xy.device, dtype=xy.dtype)
+    if cfg.polygon_raster_weight > 0 and "room_mask" in batch:
+        polygon_raster = _polygon_raster_loss(
+            xy,
+            batch["room_mask"],
+            room_valid,
+            corner_valid,
+            raster_size=cfg.polygon_raster_size,
+        )
+
+    total = (
+        room_bce
+        + corner_bce
+        + (cfg.coord_weight * coord_l1)
+        + (cfg.polygon_edge_weight * edge_l1)
+        + (cfg.polygon_area_weight * area_l1)
+        + (cfg.polygon_angle_weight * angle_loss)
+        + class_loss
+        + (cfg.polygon_raster_weight * polygon_raster)
+    )
+    parts = {
+        "room_bce": room_bce,
+        "corner_bce": corner_bce,
+        "coord_l1": coord_l1,
+        "edge_l1": edge_l1,
+        "area_l1": area_l1,
+        "angle": angle_loss,
+        "class": class_loss,
+        "polygon_raster_loss": polygon_raster,
+    }
+    return total, parts
 
 
 def _dice_from_logits(logits: torch.Tensor, target: torch.Tensor, threshold: float = 0.5) -> torch.Tensor:
@@ -635,64 +793,24 @@ def _match_and_reorder_targets(pred: dict[str, torch.Tensor], batch: dict[str, t
 
 def polygon_loss(pred: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], cfg: LossConfig | None = None):
     """
-    takes preds and gt then calculates how wrong the model is across all major outputs:
-    - room existence
-    - corner validity
-    - polygon coordinates
-    - room class
-    - wall mask
-    - opening mask
-    - optional furniture mask
+    Compute full RoomToFP loss.
 
-    - matches predicted room slots to ground-truth rooms
-    - computes room existence loss
-    - computes corner validity loss
-    - computes polygon coordinate L1 loss only on valid corners
-    - computes room class loss only on valid rooms
-    - computes optional furniture mask loss
-    - computes wall mask loss
-    - computes opening mask loss
-    - combines everything using weights from LossConfig
-    - returns total loss plus detailed logging values
+    Improvement v5 additions:
+    - polygon_raster_loss: softly rasterises predicted corner_xy and compares it to matched GT room_mask.
+    - aux_decoder_loss: applies polygon supervision to intermediate corner-decoder outputs.
+    - query-mask losses remain auxiliary; the polygon branch is now trained as the primary final output.
     """
     cfg = cfg or LossConfig()
+    original_batch = batch
 
-    # model predicts room slots in arbitrary order -> dataset also stores room targets in an arbitrary order
-    # before calculating loss, _match_and_reorder_targets() matches predicted rooms to ground-truth rooms using Hungarian matching
-    # without this, model would be punished if it predicted the correct room in the “wrong” slot
-    batch = _match_and_reorder_targets(pred, batch, cfg)
-
-    room_valid = batch["room_valid"]
-    corner_valid = batch["corner_valid"]
-
-    valid_logits = pred["room_valid_logits"]
-    corner_logits = pred["corner_valid_logits"]
-
+    # Match final prediction slots to ground-truth room objects first.
+    batch = _match_and_reorder_targets(pred, original_batch, cfg)
     xy = pred["corner_xy"]
-    target_xy = batch["polygon_xy"]
+    room_valid = batch["room_valid"]
 
-    room_bce = _balanced_bce_with_logits(valid_logits, room_valid, max_pos_weight=cfg.room_pos_weight_max)
+    polygon_total, polygon_parts = _polygon_supervision_terms(pred, batch, cfg)
 
-    # Improvement v3: corner validity is only learned for real rooms so empty padded room slots do not dominate training.
-    corner_raw = F.binary_cross_entropy_with_logits(corner_logits, corner_valid, reduction="none")
-    corner_room_mask = room_valid.unsqueeze(-1)
-    corner_bce = (corner_raw * corner_room_mask).sum() / (corner_room_mask.sum() * corner_valid.shape[-1]).clamp_min(1.0)
-
-    mask = (room_valid.unsqueeze(-1) * corner_valid).unsqueeze(-1)
-    # calc MAE b/w pred and target corner coords
-    coord_l1 = (torch.abs(xy - target_xy) * mask).sum() / mask.sum().clamp_min(1.0)
-    edge_l1 = _polygon_edge_l1(xy, target_xy, room_valid, corner_valid)
-    area_l1 = _polygon_area_l1(xy, target_xy, room_valid, corner_valid)
-    angle_loss = _polygon_angle_loss(xy, room_valid, corner_valid)
     overlap_loss = _room_mask_overlap_loss(pred["room_mask_logits"], room_valid) if "room_mask_logits" in pred else torch.zeros((), device=xy.device, dtype=xy.dtype)
-
-    # room class loss
-    class_loss = F.cross_entropy(
-        pred["room_class_logits"].flatten(0, 1),
-        batch["room_class"].flatten(),
-        reduction="none",
-    )
-    class_loss = (class_loss.view_as(room_valid) * room_valid).sum() / room_valid.sum().clamp_min(1.0)
 
     if cfg.use_furniture and "furniture_logits" in pred and cfg.aux_furniture > 0:
         furniture_loss = _mask_loss(pred["furniture_logits"], batch["furniture_mask"], cfg)
@@ -705,32 +823,40 @@ def polygon_loss(pred: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], 
     corner_heatmap_loss = _mask_loss(pred["corner_heatmap_logits"], batch["corner_heatmap"], cfg) if "corner_heatmap_logits" in pred else torch.zeros((), device=xy.device, dtype=xy.dtype)
     room_mask_loss = _room_query_mask_loss(pred["room_mask_logits"], batch["room_mask"], room_valid, cfg) if "room_mask_logits" in pred else torch.zeros((), device=xy.device, dtype=xy.dtype)
 
+    aux_decoder_loss = torch.zeros((), device=xy.device, dtype=xy.dtype)
+    aux_count = 0
+    if cfg.aux_decoder_weight > 0:
+        for aux_pred in pred.get("aux_outputs", []):
+            aux_batch = _match_and_reorder_targets(aux_pred, original_batch, cfg)
+            aux_total, _aux_parts = _polygon_supervision_terms(aux_pred, aux_batch, cfg)
+            aux_decoder_loss = aux_decoder_loss + aux_total
+            aux_count += 1
+        if aux_count > 0:
+            aux_decoder_loss = aux_decoder_loss / float(aux_count)
+
     total = (
-        room_bce
-        + corner_bce
-        + (cfg.coord_weight * coord_l1)
-        + (cfg.polygon_edge_weight * edge_l1)
-        + (cfg.polygon_area_weight * area_l1)
-        + (cfg.polygon_angle_weight * angle_loss)
+        polygon_total
         + (cfg.room_overlap_weight * overlap_loss)
-        + class_loss
         + (cfg.aux_furniture * furniture_loss)
         + (cfg.aux_wall * wall_loss)
         + (cfg.aux_opening * opening_loss)
         + (cfg.aux_boundary * boundary_loss)
         + (cfg.aux_corner_heatmap * corner_heatmap_loss)
         + (cfg.aux_room_mask * room_mask_loss)
+        + (cfg.aux_decoder_weight * aux_decoder_loss)
     )
 
     return total, {
-        "room_bce": room_bce.item(),
-        "corner_bce": corner_bce.item(),
-        "coord_l1": coord_l1.item(),
-        "edge_l1": edge_l1.item(),
-        "area_l1": area_l1.item(),
-        "angle": angle_loss.item(),
+        "room_bce": polygon_parts["room_bce"].item(),
+        "corner_bce": polygon_parts["corner_bce"].item(),
+        "coord_l1": polygon_parts["coord_l1"].item(),
+        "edge_l1": polygon_parts["edge_l1"].item(),
+        "area_l1": polygon_parts["area_l1"].item(),
+        "angle": polygon_parts["angle"].item(),
+        "polygon_raster_loss": polygon_parts["polygon_raster_loss"].item(),
+        "aux_decoder_loss": aux_decoder_loss.item(),
         "overlap": overlap_loss.item(),
-        "class": class_loss.item(),
+        "class": polygon_parts["class"].item(),
         "furniture_loss": furniture_loss.item(),
         "wall_loss": wall_loss.item(),
         "opening_loss": opening_loss.item(),
@@ -738,7 +864,6 @@ def polygon_loss(pred: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], 
         "corner_heatmap_loss": corner_heatmap_loss.item(),
         "room_mask_loss": room_mask_loss.item(),
     }
-
 
 
 def _invalid_polygon_rate(pred_xy: torch.Tensor, room_valid: torch.Tensor, corner_valid: torch.Tensor) -> torch.Tensor:
@@ -972,6 +1097,9 @@ def main():
     ap.add_argument("--polygon-angle-weight", type=float, default=0.20, help="Improvement v4: Manhattan-style edge regularisation weight.")
     ap.add_argument("--polygon-area-weight", type=float, default=0.35, help="Improvement v4: polygon area consistency weight.")
     ap.add_argument("--room-overlap-weight", type=float, default=0.10, help="Improvement v4: query-mask overlap penalty weight.")
+    ap.add_argument("--polygon-raster-weight", type=float, default=1.0, help="Improvement v5: RoomFormer-style soft raster loss on predicted corner polygons.")
+    ap.add_argument("--polygon-raster-size", type=int, default=64, help="Improvement v5: low-resolution raster size for polygon raster loss. 64 is fast; 96 is sharper but slower.")
+    ap.add_argument("--aux-decoder-weight", type=float, default=0.35, help="Improvement v5: weight for auxiliary decoder-layer polygon losses.")
     ap.add_argument("--boundary-weight", type=float, default=0.15, help="Improvement v3: edge loss inside mask losses for sharper wall/opening boundaries.")
     ap.add_argument("--room-pos-weight-max", type=float, default=8.0, help="Improvement v3: maximum dynamic positive weight for real room slots.")
     ap.add_argument("--aux-boundary", type=float, default=0.35, help="Improvement v3: boundary heatmap auxiliary loss weight.")
@@ -991,7 +1119,8 @@ def main():
     ap.add_argument("--patience", type=int, default=15, help="Stop if validation loss does not improve for this many epochs.")
     ap.add_argument("--min-delta", type=float, default=1e-4, help="Minimum val loss improvement required to reset patience.")
     ap.add_argument("--save-every", type=int, default=0, help="Save checkpoint_epoch_XXXX.pt every N epochs. 0 disables periodic checkpoints.")
-    ap.add_argument("--resume", default="", help="Path to checkpoint to resume from, usually last.pt.")
+    ap.add_argument("--resume", default="", help="Path to checkpoint to resume from, usually last.pt or best.pt.")
+    ap.add_argument("--resume-model-only", action="store_true", help="Improvement v5: load model weights from --resume but reset optimizer/scheduler/history because the loss objective changed.")
     ap.add_argument("--no-early-stop", action="store_true", help="Disable early stopping.")
 
     # Scheduler.
@@ -1079,9 +1208,21 @@ def main():
         resume_path = Path(args.resume)
         if not resume_path.exists():
             raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
-        print(f"--Resume Training-- Loading checkpoint: {resume_path}")
-        start_epoch, best, best_epoch, patience_counter, history = load_checkpoint(resume_path, model, opt, scheduler, args.device)
-        print(f"--Resume Training-- start_epoch={start_epoch}, best_val={best:.6f}, best_epoch={best_epoch}, patience_counter={patience_counter}")
+        if args.resume_model_only:
+            # Improvement v5: recommended when switching to polygon raster / auxiliary decoder losses.
+            # The old best_val and optimizer state came from a different objective, so we reuse weights only.
+            print(f"--Resume Model Only-- Loading model weights only: {resume_path}")
+            checkpoint = torch.load(resume_path, map_location=args.device)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            start_epoch = 1
+            best = float("inf")
+            best_epoch = 0
+            patience_counter = 0
+            history = []
+        else:
+            print(f"--Resume Training-- Loading checkpoint: {resume_path}")
+            start_epoch, best, best_epoch, patience_counter, history = load_checkpoint(resume_path, model, opt, scheduler, args.device)
+            print(f"--Resume Training-- start_epoch={start_epoch}, best_val={best:.6f}, best_epoch={best_epoch}, patience_counter={patience_counter}")
 
     config = {
         **vars(args),

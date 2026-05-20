@@ -29,7 +29,7 @@ def _infer_model_dims_from_state_dict(state_dict: dict) -> dict:
         dims["max_rooms"] = int(state_dict["room_queries.weight"].shape[0])
         dims["embed_dim"] = int(state_dict["room_queries.weight"].shape[1])
 
-    # Improvement v4: v4 checkpoints store max_corners in learned corner-query tokens.
+    # Improvement v4.1: v4.1 checkpoints store max_corners in learned corner-query tokens.
     # Keep the old corner_head fallback only so older v3 checkpoints can still be inspected.
     if "corner_queries.weight" in state_dict:
         dims["max_corners"] = int(state_dict["corner_queries.weight"].shape[0])
@@ -149,7 +149,7 @@ def main() -> None:
         base=int(model_args.get("base", 48)),
         mask_dim=int(model_args.get("mask_dim", 128)),
         decoder_layers=int(model_args.get("decoder_layers", 4)),
-        corner_decoder_layers=int(model_args.get("corner_decoder_layers", 2)),  # Improvement v4: restore corner-query decoder depth.
+        corner_decoder_layers=int(model_args.get("corner_decoder_layers", 2)),  # Improvement v4.1: restore corner-query decoder depth.
         num_heads=int(model_args.get("num_heads", 8)),
     ).to(args.device)
 
