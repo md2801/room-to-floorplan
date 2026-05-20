@@ -547,7 +547,9 @@ def _polygon_raster_loss(
 
 
 def _polygon_supervision_terms(pred: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], cfg: LossConfig) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Shared polygon-only supervision used by the final output and auxiliary decoder outputs."""
+    """
+    Shared polygon-only supervision used by the final output and auxiliary decoder outputs.
+    """
     room_valid = batch["room_valid"]
     corner_valid = batch["corner_valid"]
     valid_logits = pred["room_valid_logits"]

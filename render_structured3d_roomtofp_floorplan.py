@@ -63,7 +63,6 @@ FURNITURE_LABELS = {
 
 
 # ----------------------------- annotation parsing -----------------------------
-
 def load_annotation(scene_dir: Path) -> dict:
     path = scene_dir / "annotation_3d.json"
     if not path.exists():
@@ -208,7 +207,8 @@ def parse_opening_lines(
     max_wall_distance_m: float = 0.20,
     max_per_plane: int = 1,
 ) -> list[dict]:
-    """Parse door/window annotation planes into one clean top-down segment per plane.
+    """
+    Parse door/window annotation planes into one clean top-down segment per plane.
 
     Structured3D door/window planes are usually vertical rectangles. The previous code
     drew every edge from every plane, which created dozens of duplicate marks. This
@@ -266,7 +266,6 @@ def parse_opening_lines(
 
 
 # ----------------------------- BEV/grid helpers ------------------------------
-
 def grid_from_bev(bev: dict) -> SceneGrid:
     return SceneGrid(
         origin_xy=np.asarray(bev["origin_xy"], dtype=np.float32),
@@ -582,7 +581,6 @@ def furniture_components_from_semantic(
 
 
 # ---------------------- annotation-first furniture extraction ----------------------
-
 def _annotation_plane_xy(annotation: dict, plane_id: int) -> np.ndarray:
     """
     Return unique XY coordinates, in metres, for all junctions belonging to one annotation plane
@@ -746,7 +744,6 @@ def furniture_components_from_annotation(
 
 
 # ------------------------------- visual outputs ------------------------------
-
 def _xml_text(s: str) -> str:
     return s.replace("&", "and").replace("<", "").replace(">", "")
 
@@ -866,7 +863,7 @@ def _save_roomtofp_bev_preview(obs: np.ndarray, wall_mask: np.ndarray, furniture
 
 
 def build_roomtofp_scene_outputs(scene_dir: Path, output_dir: Path, variants: list[str], args) -> dict:
-    # Inspired by RoomFormer: use all panorama RGB-D views to build a scene-level BEV,
+    # Inspired by RoomFormer - use all panorama RGB-D views to build a scene-level BEV,
     # then use polygon annotations for clean vector floorplan supervision.
     output_dir.mkdir(parents=True, exist_ok=True)
     annotation = load_annotation(scene_dir)

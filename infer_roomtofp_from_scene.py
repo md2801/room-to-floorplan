@@ -24,14 +24,14 @@ Clean-vector RoomToFP inference.
 
 Flow:
 scene folder
-→ build BEV observation
-→ load trained model
-→ predict rooms/walls/openings
-→ extract polygon rooms from corner head by default
-→ save raw/clean masks for debugging
-→ derive final wall segments from predicted room polygon edges
-→ convert opening-mask blobs into snapped vector opening segments
-→ save clean final preview/SVG/metadata
+- build BEV observation
+- load trained model
+- predict rooms/walls/openings
+- extract polygon rooms from corner head by default
+- save raw/clean masks for debugging
+- derive final wall segments from predicted room polygon edges
+- convert opening-mask blobs into snapped vector opening segments
+- save clean final preview/SVG/metadata
 
 Important:
 - Final output is polygon-first.
@@ -70,10 +70,7 @@ ROOM_COLORS = {
 }
 
 
-# -----------------------------
 # Checkpoint/model helpers
-# -----------------------------
-
 def _positive_int(value, fallback: int) -> int:
     try:
         value = int(value)
@@ -113,10 +110,7 @@ def _hex_to_rgb(color: str) -> tuple[int, int, int]:
     return tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
 
 
-# -----------------------------
 # Polygon helpers
-# -----------------------------
-
 def _polygon_area_px(points: np.ndarray) -> float:
     """Return absolute polygon area in pixels."""
     pts = np.asarray(points, dtype=np.float32)
@@ -373,10 +367,7 @@ def _extract_predicted_rooms(
     )
 
 
-# -----------------------------
 # Mask cleanup
-# -----------------------------
-
 def _remove_small_components(mask: np.ndarray, min_area_px: int) -> np.ndarray:
     mask_u8 = mask.astype(np.uint8)
     if min_area_px <= 1:
@@ -428,10 +419,7 @@ def _clean_binary_mask(
     return _remove_small_components(mask.astype(bool), int(min_area_px))
 
 
-# -----------------------------
 # Vector wall/opening extraction
-# -----------------------------
-
 def _segment_length(seg: np.ndarray) -> float:
     a = np.asarray(seg[0], dtype=np.float32)
     b = np.asarray(seg[1], dtype=np.float32)
@@ -534,11 +522,11 @@ def _opening_components_to_segments(
 
     Process:
       opening mask
-      → connected components
-      → component centroid
-      → nearest predicted wall segment
-      → short segment along that wall
-      → final blue/cyan vector opening
+      - connected components
+      - component centroid
+      - nearest predicted wall segment
+      - short segment along that wall
+      - final blue/cyan vector opening
     """
     mask_u8 = opening_mask.astype(np.uint8)
     num, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_u8, connectivity=8)
@@ -615,10 +603,7 @@ def _opening_components_to_segments(
     return openings
 
 
-# -----------------------------
 # Clean vector renderers
-# -----------------------------
-
 def _xml_text(s: str) -> str:
     return str(s).replace("&", "and").replace("<", "").replace(">", "")
 
@@ -711,11 +696,9 @@ def _write_vector_svg(
 ) -> None:
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{grid_size}" height="{grid_size}" viewBox="0 0 {grid_size} {grid_size}">',
-        '<rect width="100%" height="100%" fill="white"/>',
-    ]
+        '<rect width="100%" height="100%" fill="white"/>', '<g id="rooms">']
 
     # Room fills.
-    parts.append('<g id="rooms">')
     for room in rooms:
         pts_s = " ".join(f"{int(x)},{int(y)}" for x, y in room["points_px"])
         color = ROOM_COLORS.get(room["type"], ROOM_COLORS["undefined"])
@@ -783,10 +766,7 @@ def _write_vector_svg(
     path.write_text("\n".join(parts), encoding="utf-8")
 
 
-# -----------------------------
 # Main
-# -----------------------------
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run trained RoomToFP inference on a Structured3D scene folder.")
 
