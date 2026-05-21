@@ -628,6 +628,10 @@ class ModelEMA:
 
     EMA keeps a smoothed copy of model weights. Transformer/polygon models can be noisy,
     so EMA checkpoints often produce cleaner inference than the raw last-step weights.
+
+    Improvement v7 fix: keep EMA shadow tensors on the same device/dtype as the model
+    during update/copy operations. This prevents CPU/CUDA mismatch after resuming from
+    a checkpoint loaded with map_location="cpu".
     """
 
     def __init__(self, model: nn.Module, decay: float = 0.999):
@@ -642,38 +646,68 @@ class ModelEMA:
     @torch.no_grad()
     def update(self, model: nn.Module) -> None:
         state = model.state_dict()
+
         for k, v in state.items():
-            if k not in self.shadow or not torch.is_floating_point(v):
+            if not torch.is_floating_point(v):
                 continue
+
+            if k not in self.shadow:
+                self.shadow[k] = v.detach().clone()
+                continue
+
+            # Improvement v7 fix: after resume, EMA tensors may be on CPU because
+            # torch.load(..., map_location="cpu") was used. Move the shadow tensor
+            # to the model tensor's device/dtype before blending.
+            if self.shadow[k].device != v.device or self.shadow[k].dtype != v.dtype:
+                self.shadow[k] = self.shadow[k].to(device=v.device, dtype=v.dtype)
+
             self.shadow[k].mul_(self.decay).add_(v.detach(), alpha=1.0 - self.decay)
 
     def state_dict(self) -> dict[str, torch.Tensor]:
+        # Save EMA on CPU so checkpoint files are portable.
         return {k: v.detach().cpu().clone() for k, v in self.shadow.items()}
 
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        self.shadow = {k: v.detach().clone() for k, v in state.items()}
+        # Keep loaded EMA on CPU initially; update()/copy_to() will move tensors
+        # to the model device when needed.
+        self.shadow = {
+            k: v.detach().clone()
+            for k, v in state.items()
+            if torch.is_floating_point(v)
+        }
 
     @torch.no_grad()
     def copy_to(self, model: nn.Module) -> None:
         model_state = model.state_dict()
+
         for k, v in self.shadow.items():
-            if k in model_state:
-                model_state[k].copy_(v.to(model_state[k].device, dtype=model_state[k].dtype))
+            if k not in model_state:
+                continue
+
+            model_tensor = model_state[k]
+            if not torch.is_floating_point(model_tensor):
+                continue
+
+            model_tensor.copy_(v.to(device=model_tensor.device, dtype=model_tensor.dtype))
 
     @torch.no_grad()
     def store(self, model: nn.Module) -> None:
+        model_state = model.state_dict()
+
         self.backup = {
             k: v.detach().clone()
-            for k, v in model.state_dict().items()
-            if k in self.shadow
+            for k, v in model_state.items()
+            if k in self.shadow and torch.is_floating_point(v)
         }
 
     @torch.no_grad()
     def restore(self, model: nn.Module) -> None:
         model_state = model.state_dict()
+
         for k, v in self.backup.items():
             if k in model_state:
-                model_state[k].copy_(v)
+                model_state[k].copy_(v.to(device=model_state[k].device, dtype=model_state[k].dtype))
+
         self.backup = {}
 
 
@@ -801,13 +835,15 @@ def run_epoch(
                             ema.update(model)
 
         all_parts.append(parts)
+        running = average_dict(all_parts)
+
         pbar.set_postfix({
-            "loss": f"{parts['loss']:.2f}",
-            "coord": f"{parts['coord_l1']:.3f}",
-            "wdice": f"{parts['wall_dice']:.3f}",
-            "odice": f"{parts['opening_dice']:.3f}",
-            "rmdice": f"{parts['matched_room_mask_dice']:.3f}",
-            "bdice": f"{parts['boundary_dice']:.3f}",
+            "loss_avg": f"{running.get('loss', 0.0):.2f}",
+            "coord_avg": f"{running.get('coord_l1', 0.0):.3f}",
+            "wdice_avg": f"{running.get('wall_dice', 0.0):.3f}",
+            "odice_avg": f"{running.get('opening_dice', 0.0):.3f}",
+            "rmdice_avg": f"{running.get('matched_room_mask_dice', 0.0):.3f}",
+            "bdice_avg": f"{running.get('boundary_dice', 0.0):.3f}",
         })
     return average_dict(all_parts)
 
