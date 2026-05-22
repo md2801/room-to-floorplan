@@ -18,8 +18,11 @@ CORS(app)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_ROOT = os.path.join(BASE_DIR, 'output')
+
+# You can change this to the desired scene folder name in the Structured3D dataset you want to test on. 
+# Make sure it exists in the dataset directory.
 scene_folder_name = "scene_00000"
-SCENE_DIR = os.path.join(BASE_DIR, 'dataset', 'Structured3D', 'scene_00000')
+SCENE_DIR = os.path.join(BASE_DIR, 'dataset', 'Structured3D', scene_folder_name)
 CHECKPOINT = os.path.join(
     BASE_DIR,
     'output',
