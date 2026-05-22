@@ -1,7 +1,7 @@
-// ─── VisionScape Mock API Services ────────────────────────────
+// VisionScape Mock API Services
 import JSZip from 'jszip';
 
-// ── Helpers ──────────────────────────────────────────────────
+// Helpers
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -19,7 +19,7 @@ function isIgnored(path) {
   );
 }
 
-// ── Scene ZIP Validation ──────────────────────────────────────
+// Scene ZIP Validation
 
 const REQUIRED_PANORAMA_FILES = [
   'camera_xyz.txt',
@@ -207,30 +207,46 @@ export async function extractPreviewImage(zip, path) {
   }
 }
 
+// Async Method to call backend API for floorplan generation 
+// from scene mode. Progress updates are sent via the onProgress callback (progress: 0-100, message: string).
+
+const API_BASE = "http://localhost:5000";
 export async function generateFloorplanFromScene(sceneMetadata, selectedRoomId, onProgress) {
-  const steps = [
-    { progress: 8,  message: 'Parsing annotation_3d.json…' },
-    { progress: 20, message: `Loading room ${selectedRoomId} panorama…` },
-    { progress: 35, message: 'Extracting depth map…' },
-    { progress: 50, message: 'Analysing semantic labels…' },
-    { progress: 65, message: 'Detecting wall planes…' },
-    { progress: 78, message: 'Tracing floor boundaries…' },
-    { progress: 90, message: 'Rendering floorplan…' },
-    { progress: 100, message: 'Complete' },
-  ];
-  for (const step of steps) {
-    await delay(480 + Math.random() * 350);
-    onProgress?.(step.progress, step.message);
+  onProgress?.(5, 'Starting floorplan generation…');
+
+  const response = await fetch(`${API_BASE}/inferFloorplan`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+        sceneName: sceneMetadata.sceneName,
+        roomId: selectedRoomId,
+      })
+  });
+
+  onProgress?.(80, "Rendering floorplan...");
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Floorplan generation failed");
   }
+
+  const data = await response.json();
+
+  onProgress?.(100, "Floorplan generation complete!!");
+
   return {
     success: true,
     floorplanId: `fp_${sceneMetadata.sceneName}_${selectedRoomId}_${Date.now()}`,
     sceneName: sceneMetadata.sceneName,
     roomId: selectedRoomId,
+    preview_png: data.preview_png,
+    svg: data.svg
   };
 }
 
-// ── Legacy video API ──────────────────────────────────────────
+// Legacy video API
 export async function uploadVideo(file) {
   await delay(1200);
   return { success: true, fileId: `vid_${Date.now()}`, filename: file.name, size: file.size };
@@ -241,10 +257,9 @@ export async function generateFloorplan(fileId, onProgress) {
     { progress: 10, message: 'Extracting frames…' },
     { progress: 28, message: 'Detecting room boundaries…' },
     { progress: 45, message: 'Mapping spatial relationships…' },
-    { progress: 62, message: 'Identifying furniture elements…' },
     { progress: 78, message: 'Rendering floorplan…' },
-    { progress: 90, message: 'Generating 3D model…' },
-    { progress: 100, message: 'Complete' },
+    { progress: 90, message: 'Generating AI floorplan' },
+    { progress: 100, message: 'Complete!' },
   ];
   for (const step of steps) {
     await delay(600 + Math.random() * 400);

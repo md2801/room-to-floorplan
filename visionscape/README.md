@@ -102,9 +102,7 @@ Open Studio
   → Click "Generate Floorplan"
   → Animated progress bar runs (mock 7-step pipeline)
   → FloorplanViewer renders:
-       · With Furniture (annotated SVG)
        · Without Furniture (dimensioned SVG)
-       · 3D View (CSS isometric placeholder)
 ```
 
 ---

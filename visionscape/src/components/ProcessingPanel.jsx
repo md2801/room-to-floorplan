@@ -24,6 +24,9 @@ export default function ProcessingPanel({
   const [progress, setProgress] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
 
+  const [preview_png, setPreviewPng] = useState(null);
+  const [svg, setSvg] = useState(null);
+
   const isDisabled = mode === 'scene'
     ? !sceneMetadata || !selectedRoomId
     : !videoFile;
@@ -36,10 +39,14 @@ export default function ProcessingPanel({
 
     if (mode === 'scene') {
       const { generateFloorplanFromScene } = await import('../services/api.js');
-      await generateFloorplanFromScene(sceneMetadata, selectedRoomId, (p, msg) => {
+      const result = await generateFloorplanFromScene(sceneMetadata, selectedRoomId, (p, msg) => {
         setProgress(p);
         setStatusMsg(msg);
       });
+
+      console.log("Inference result:", result);
+      onComplete(result);
+      return;
     } else {
       const { uploadVideo, generateFloorplan } = await import('../services/api.js');
       const upload = await uploadVideo(videoFile);
