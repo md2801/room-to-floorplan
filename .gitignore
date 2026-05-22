@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 .venv
 .idea
+visionscape/node_modules
