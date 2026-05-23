@@ -9,26 +9,27 @@ app = Flask(__name__)
 CORS(app)
 
 '''Path Configurations:
-- DEVICE: The device to run inference on (GPU if available, otherwise CPU).
 - BASE_DIR: The directory where this app.py file is located.
 - OUTPUT_ROOT: The root directory where inference outputs will be saved.
 - SCENE_DIR: The directory of the input scene for inference.
 - CHECKPOINT: The path to the model checkpoint used for inference.
 '''
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_ROOT = os.path.join(BASE_DIR, 'output')
 
-# You can change this to the desired scene folder name in the Structured3D dataset you want to test on. 
-# Make sure it exists in the dataset directory.
-scene_folder_name = "scene_00000"
-SCENE_DIR = os.path.join(BASE_DIR, 'dataset', 'Structured3D', scene_folder_name)
+'''Change the SCENE_DIR and CHECKPOINT to desired paths,
+but make sure the SCENE_DIR and CHECKPOINT paths are valid and exist on your system before running the app.
+Also add the corresponding scene folder name in the scene_folder_name variable for correct output path generation.
+Example: scene_00000
+'''
+scene_folder_name = "SCENE_FOLDER_NAME"
+SCENE_DIR = os.path.join(BASE_DIR, 'dataset','Structured3D', scene_folder_name)
 CHECKPOINT = os.path.join(
     BASE_DIR,
     'output',
     'v7',
     'artifacts',
-    'best.pt'
+    'best_ema.pt'
 )
 
 '''Defining the endpoint for floorplan inference 
@@ -42,30 +43,27 @@ def infer_floorplan():
         OUTPUT_ROOT,
         "inference",
         "v7",
-        f"{scene_folder_name}_best_clean"
+        f"{scene_folder_name}_best_ema_v7"
     )
 
     os.makedirs(output_dir, exist_ok=True)
 
     command = [
         "python", script,
-
         "--scene-dir", SCENE_DIR,
         "--checkpoint", CHECKPOINT,
         "--output-dir", output_dir,
-
-        "--variants", "full",
         "--grid-size", "512",
-        "--device", DEVICE,
-
-        "--room-threshold", "0.35",
-        "--corner-threshold", "0.45",
-        "--simplify-eps-px", "2",
+        "--auto-select-layout",
+        "--layout-candidates", "balanced",
+        "--mask-threshold", "0.50",
+        "--min-room-area-px", "80",
+        "--opening-snap-distance-px", "28",
+        "--min-opening-area-px", "12",
+        "--min-opening-length-px", "18",
+        "--bev-opening-weight", "0.5",
         "--snap-axis-threshold-px", "8",
-        "--opening-snap-distance-px", "45",
-        "--min-opening-area-px", "4",
-        "--min-opening-length-px", "14",
-        "--bev-opening-weight", "1.0"
+        "--simplify-eps-px", "2"
     ]
 
     # Run the command using subprocess
@@ -81,8 +79,8 @@ def infer_floorplan():
         }), 500
     
     # Extract Output files from the path specified 
-    preview_file = "pred_floorplan_preview.png"
-    preview_path = os.path.join(output_dir, preview_file)
+    preview_png = "pred_floorplan_preview.png"
+    preview_path = os.path.join(output_dir, preview_png)
     svg_file = "pred_floorplan.svg"
     svg_path = os.path.join(output_dir, svg_file)
 
@@ -96,13 +94,24 @@ def infer_floorplan():
     relative_output_dir = os.path.relpath(output_dir, OUTPUT_ROOT).replace("\\", "/")
 
     return jsonify({
-        "preview_png": f"http://localhost:5000/output/{relative_output_dir}/{preview_file}",
+        "png": f"http://localhost:5000/output/{relative_output_dir}/{preview_png}",
         "svg": f"http://localhost:5000/output/{relative_output_dir}/{svg_file}"
     })
 
 @app.route("/output/<path:filename>")
 def get_output(filename):
-    return send_from_directory(OUTPUT_ROOT, filename)
+    return send_from_directory(
+        OUTPUT_ROOT, 
+        filename
+    )
+
+@app.route("/download/<path:filename>")
+def download_file(filename):
+    return send_from_directory(
+        OUTPUT_ROOT,
+        filename,
+        as_attachment=True
+    )
 
 def main():
     app.run(debug=True, port=5000)

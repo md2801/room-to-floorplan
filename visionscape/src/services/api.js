@@ -241,7 +241,7 @@ export async function generateFloorplanFromScene(sceneMetadata, selectedRoomId, 
     floorplanId: `fp_${sceneMetadata.sceneName}_${selectedRoomId}_${Date.now()}`,
     sceneName: sceneMetadata.sceneName,
     roomId: selectedRoomId,
-    preview_png: data.preview_png,
+    png: data.png,
     svg: data.svg
   };
 }
@@ -265,5 +265,8 @@ export async function generateFloorplan(fileId, onProgress) {
     await delay(600 + Math.random() * 400);
     onProgress?.(step.progress, step.message);
   }
-  return { success: true, floorplanId: `fp_${Date.now()}` };
+  return { 
+    success: true, 
+    floorplanId: `fp_${Date.now()}` 
+  };
 }

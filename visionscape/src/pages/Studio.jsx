@@ -30,7 +30,7 @@ export default function Studio() {
   // Generation state
   const [isGenerated, setIsGenerated] = useState(false);
 
-  const [preview_png, setPreviewPng] = useState(null);
+  const [png, setPng] = useState(null);
   const [svg, setSvg] = useState(null);
 
   // Derived step for the indicator
@@ -98,7 +98,7 @@ export default function Studio() {
   };
 
   const handleGenerationComplete = (result) => {
-    setPreviewPng(result?.preview_png || null);
+    setPng(result?.png || null);
     setSvg(result?.svg || null);
     setIsGenerated(true);
   };
@@ -260,7 +260,7 @@ export default function Studio() {
               <FloorplanViewer
                 sceneName={validation?.sceneName}
                 roomId={selectedRoomId}
-                preview_png={preview_png}
+                png={png}
                 svg={svg}
               />
             </div>
