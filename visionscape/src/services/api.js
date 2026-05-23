@@ -211,18 +211,21 @@ export async function extractPreviewImage(zip, path) {
 // from scene mode. Progress updates are sent via the onProgress callback (progress: 0-100, message: string).
 
 const API_BASE = "http://localhost:5000";
-export async function generateFloorplanFromScene(sceneMetadata, selectedRoomId, onProgress) {
+export async function generateFloorplanFromScene(sceneMetadata, selectedRoomId, sceneFile, onProgress) {
   onProgress?.(5, 'Starting floorplan generation…');
+
+  const formData = new FormData();
+  formData.append('sceneZip', sceneFile);
+  formData.append('sceneName', sceneMetadata.sceneName);
+  formData.append('roomId', selectedRoomId);
 
   const response = await fetch(`${API_BASE}/inferFloorplan`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+    /*body: JSON.stringify({
         sceneName: sceneMetadata.sceneName,
         roomId: selectedRoomId,
-      })
+      })*/
+    body: formData
   });
 
   onProgress?.(80, "Rendering floorplan...");
@@ -242,7 +245,9 @@ export async function generateFloorplanFromScene(sceneMetadata, selectedRoomId, 
     sceneName: sceneMetadata.sceneName,
     roomId: selectedRoomId,
     png: data.png,
-    svg: data.svg
+    svg: data.svg,
+    download_png: data.download_png,
+    download_svg: data.download_svg
   };
 }
 

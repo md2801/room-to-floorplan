@@ -32,7 +32,8 @@ export default function Studio() {
 
   const [png, setPng] = useState(null);
   const [svg, setSvg] = useState(null);
-
+  const [downloadPng, setDownloadPng] = useState(null);
+  const [downloadSvg, setDownloadSvg] = useState(null);
   // Derived step for the indicator
   const step = (() => {
     if (isGenerated) return 3;
@@ -100,6 +101,8 @@ export default function Studio() {
   const handleGenerationComplete = (result) => {
     setPng(result?.png || null);
     setSvg(result?.svg || null);
+    setDownloadPng(result?.download_png || null);
+    setDownloadSvg(result?.download_svg || null);
     setIsGenerated(true);
   };
 
@@ -208,6 +211,7 @@ export default function Studio() {
                   mode={inputMode}
                   sceneMetadata={validation}
                   selectedRoomId={selectedRoomId}
+                  sceneFile={sceneFile}
                   videoFile={videoFile}
                   onComplete={handleGenerationComplete}
                 />
@@ -262,6 +266,8 @@ export default function Studio() {
                 roomId={selectedRoomId}
                 png={png}
                 svg={svg}
+                download_png={downloadPng}
+                download_svg={downloadSvg}
               />
             </div>
           )}

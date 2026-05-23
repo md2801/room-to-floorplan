@@ -1,5 +1,5 @@
 import os
-import torch
+import zipfile
 import subprocess
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -8,29 +8,17 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-'''Path Configurations:
-- BASE_DIR: The directory where this app.py file is located.
-- OUTPUT_ROOT: The root directory where inference outputs will be saved.
-- SCENE_DIR: The directory of the input scene for inference.
-- CHECKPOINT: The path to the model checkpoint used for inference.
-'''
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_ROOT = os.path.join(BASE_DIR, 'output')
 
-'''Change the SCENE_DIR and CHECKPOINT to desired paths,
-but make sure the SCENE_DIR and CHECKPOINT paths are valid and exist on your system before running the app.
-Also add the corresponding scene folder name in the scene_folder_name variable for correct output path generation.
-Example: scene_00000
+'''Change CHECKPOINT to desired paths,
+but make sure that the CHECKPOINT path is valid and exist on your system before running the app.
 '''
-scene_folder_name = "SCENE_FOLDER_NAME"
-SCENE_DIR = os.path.join(BASE_DIR, 'dataset','Structured3D', scene_folder_name)
 CHECKPOINT = os.path.join(
     BASE_DIR,
-    'output',
-    'v7',
-    'artifacts',
     'best_ema.pt'
 )
+
+OUTPUT_ROOT = os.path.join(BASE_DIR, "output", "inference")
 
 '''Defining the endpoint for floorplan inference 
 which will run the infer_roomtofp_from_scene.py script 
@@ -38,10 +26,42 @@ with the specified parameters and return the generated floorplan preview and SVG
 '''
 @app.route('/inferFloorplan', methods=['POST'])
 def infer_floorplan():
+
+    uploaded_zip = request.files.get("sceneZip")
+
+    if uploaded_zip is None:
+        return jsonify({
+            "error": "No file uploaded"
+        }), 400
+    
+    extract_dir = os.path.join(BASE_DIR, "extracted")
+    os.makedirs(extract_dir, exist_ok=True)
+
     script = 'infer_roomtofp_from_scene.py'
+
+    zip_path = os.path.join(BASE_DIR, uploaded_zip.filename)
+    uploaded_zip.save(zip_path)
+
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_dir)
+    
+    SCENE_DIR = None
+
+    for item in os.listdir(extract_dir):
+        item_path = os.path.join(extract_dir, item)
+
+        if os.path.isdir(item_path) and item.startswith("scene_"):
+            SCENE_DIR = item_path
+            scene_folder_name = item
+            break
+
+    if SCENE_DIR is None:
+        return jsonify({
+            "error": "No valid scene directory found in the uploaded zip"
+        }), 400
+    
     output_dir = os.path.join(
         OUTPUT_ROOT,
-        "inference",
         "v7",
         f"{scene_folder_name}_best_ema_v7"
     )
@@ -95,7 +115,9 @@ def infer_floorplan():
 
     return jsonify({
         "png": f"http://localhost:5000/output/{relative_output_dir}/{preview_png}",
-        "svg": f"http://localhost:5000/output/{relative_output_dir}/{svg_file}"
+        "svg": f"http://localhost:5000/output/{relative_output_dir}/{svg_file}",
+        "download_png": f"http://localhost:5000/download/{relative_output_dir}/{preview_png}",
+        "download_svg": f"http://localhost:5000/download/{relative_output_dir}/{svg_file}"
     })
 
 @app.route("/output/<path:filename>")

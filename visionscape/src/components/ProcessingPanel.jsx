@@ -17,6 +17,7 @@ export default function ProcessingPanel({
   mode = 'video',
   sceneMetadata,
   selectedRoomId,
+  sceneFile,
   videoFile,
   onComplete,
 }) {
@@ -39,7 +40,11 @@ export default function ProcessingPanel({
 
     if (mode === 'scene') {
       const { generateFloorplanFromScene } = await import('../services/api.js');
-      const result = await generateFloorplanFromScene(sceneMetadata, selectedRoomId, (p, msg) => {
+      const result = await generateFloorplanFromScene(
+        sceneMetadata, 
+        selectedRoomId, 
+        sceneFile, 
+        (p, msg) => {
         setProgress(p);
         setStatusMsg(msg);
       });
