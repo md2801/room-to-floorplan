@@ -31,7 +31,7 @@ CHECKPOINT = BASE_DIR / "output" / "v7" / "artifacts" / "roomtofp_polygon_v7_512
 # CHECKPOINT = BASE_DIR / "best_ema.pt"
 
 EXTRACT_DIR = BASE_DIR / "extracted"
-OUTPUT_ROOT = BASE_DIR / "outputs"
+OUTPUT_ROOT = BASE_DIR / "output"
 INFER_SCRIPT = BASE_DIR / "infer_roomtofp_from_scene.py"
 
 app = Flask(__name__)
