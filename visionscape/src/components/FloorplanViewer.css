@@ -43,17 +43,11 @@
   border: none;
   font-size: 13px;
   font-weight: 400;
-  cursor: pointer;
+  cursor: default;
   font-family: var(--font-body);
   color: var(--text-secondary);
   background: transparent;
-  transition: all var(--duration-fast) var(--ease-out);
   white-space: nowrap;
-}
-
-.view-toggle__btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-card-hover);
 }
 
 .view-toggle__btn--active {
@@ -86,183 +80,59 @@
   display: block;
 }
 
-.fp-legend {
+/* Download buttons */
+.fp-download-row {
   display: flex;
-  gap: var(--space-lg);
-  margin-top: var(--space-md);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--border-subtle);
+  gap: var(--space-sm);
+  flex-wrap: wrap;
 }
 
-.fp-legend__item {
+.fp-download-btn {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.fp-legend__swatch {
-  display: block;
-  width: 20px;
-  height: 2px;
-  border-radius: 1px;
-}
-
-.fp-legend__swatch--wall { background: var(--accent); }
-.fp-legend__swatch--furniture { background: #252529; border: 1px solid var(--accent); height: 8px; width: 12px; border-radius: 1px; }
-.fp-legend__swatch--door { background: repeating-linear-gradient(90deg, var(--accent) 0, var(--accent) 3px, transparent 3px, transparent 5px); }
-
-/* 3D View */
-.view3d {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-  animation: fadeIn 0.35s var(--ease-out) both;
-}
-
-.view3d__scene {
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  min-height: 360px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Isometric CSS room */
-.iso-room {
-  position: relative;
-  width: 200px;
-  height: 200px;
-  transform: rotateX(45deg) rotateZ(-45deg);
-  transform-style: preserve-3d;
-}
-
-.iso-floor {
-  position: absolute;
-  width: 200px;
-  height: 200px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-emphasis);
-  transform: translateZ(0);
-}
-
-.iso-wall {
-  position: absolute;
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-}
-
-.iso-wall--back {
-  width: 200px;
-  height: 120px;
-  transform: rotateX(90deg) translateZ(-60px);
-  transform-origin: top;
-  background: #1a1a1d;
-}
-
-.iso-wall--left {
-  width: 200px;
-  height: 120px;
-  transform: rotateY(-90deg) rotateX(90deg) translateZ(-60px);
-  transform-origin: left top;
-  background: #17171a;
-}
-
-.iso-furniture {
-  position: absolute;
-  border-radius: 2px;
-}
-
-.iso-sofa {
-  width: 80px;
-  height: 30px;
-  background: #2a2a2e;
-  border: 1px solid var(--border-emphasis);
-  bottom: 20px;
-  left: 20px;
-  transform: translateZ(8px);
-}
-
-.iso-table {
-  width: 50px;
-  height: 40px;
-  background: #252529;
-  border: 1px solid var(--border-emphasis);
-  bottom: 70px;
-  left: 70px;
-  transform: translateZ(12px);
-}
-
-.iso-shelf {
-  width: 20px;
-  height: 80px;
-  background: #2a2a2e;
-  border: 1px solid var(--border-emphasis);
-  top: 20px;
-  right: 20px;
-  transform: translateZ(30px);
-}
-
-.view3d__badge {
-  position: absolute;
-  bottom: var(--space-md);
-  right: var(--space-md);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--bg-base);
-  border: 1px solid var(--border-default);
-  color: var(--text-muted);
-  font-size: 11px;
-  padding: 5px 10px;
-  border-radius: 99px;
-}
-
-.view3d__note {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.6;
-  background: var(--accent-glow);
-  border: 1px solid rgba(201, 169, 110, 0.1);
-  padding: var(--space-md);
+  padding: 9px 18px;
   border-radius: var(--radius-md);
-}
-
-/* Meta chips */
-.floorplan-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-}
-
-.meta-chip {
-  font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  padding: 5px 12px;
-  border-radius: 99px;
-}
-
-/* Download actions */
-.download-actions {
-  display: flex;
-  gap: 12px;
-  margin-top: 16px;
-  justify-content: center;
-}
-.download-btn {
-  padding: 10px 18px;
-  border-radius: 8px;
-  text-decoration: none;
-  background: var(--bg-elevated);
   border: 1px solid var(--border-default);
-  color: var(--text-primary);
+  background: var(--bg-card);
+  color: var(--text-secondary);
   font-size: 13px;
-  transition: all 0.2s ease;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+}
+
+.fp-download-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+/* SVG wrapper — make the injected SVG fill the canvas */
+.fp-svg-wrapper {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.fp-svg-wrapper svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Loading / error states */
+.fp-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.fp-load-error {
+  padding: 20px;
+  color: #e07070;
+  font-size: 13px;
+  text-align: center;
 }

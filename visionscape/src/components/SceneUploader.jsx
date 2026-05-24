@@ -1,18 +1,14 @@
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { FileArchive, Video, Upload, X } from 'lucide-react';
-import VideoUploader from './VideoUploader';
+import { FileArchive, X } from 'lucide-react';
 import './SceneUploader.css';
 
 /**
- * Top-level upload mode selector.
- * Mode A: Structured3D Scene ZIP  (primary)
- * Mode B: Video Walkthrough        (legacy)
+ * ZIP upload input for Structured3D scene archives.
+ * Video walkthrough mode has been removed — ZIP is the only input path.
  */
-export default function SceneUploader({ onSceneReady, onVideoReady }) {
-  const [mode, setMode] = useState(null); // null | 'scene' | 'video'
+export default function SceneUploader({ onSceneReady }) {
   const [file, setFile] = useState(null);
-  const [isDragActive, setDragActive] = useState(false);
 
   const handleDrop = useCallback(
     (accepted) => {
@@ -33,54 +29,10 @@ export default function SceneUploader({ onSceneReady, onVideoReady }) {
 
   const reset = () => {
     setFile(null);
-    setMode(null);
     onSceneReady(null);
   };
 
-  /* ── Mode selection ── */
-  if (!mode) {
-    return (
-      <div className="scene-uploader-choice">
-        <p className="scene-uploader-choice__label">Select an input type to begin</p>
-        <div className="scene-uploader-choice__grid">
-          <button className="mode-card mode-card--primary" onClick={() => setMode('scene')}>
-            <div className="mode-card__icon">
-              <FileArchive size={22} />
-            </div>
-            <h3 className="mode-card__title">Structured3D Scene ZIP</h3>
-            <p className="mode-card__desc">
-              Upload a <code>scene_XXXXX.zip</code> archive from the Structured3D dataset
-            </p>
-            <span className="mode-card__badge">Recommended</span>
-          </button>
-
-          <button className="mode-card" onClick={() => setMode('video')}>
-            <div className="mode-card__icon">
-              <Video size={22} />
-            </div>
-            <h3 className="mode-card__title">Video Walkthrough</h3>
-            <p className="mode-card__desc">
-              Upload or record a room walkthrough video (MP4, MOV, WebM)
-            </p>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  /* ── Video mode (delegate to existing component) ── */
-  if (mode === 'video') {
-    return (
-      <div>
-        <button className="scene-uploader-back" onClick={() => setMode(null)}>
-          ← Change input type
-        </button>
-        <VideoUploader onVideoReady={onVideoReady} />
-      </div>
-    );
-  }
-
-  /* ── Scene ZIP mode ── */
+  /* ── File accepted — show summary chip ── */
   if (file) {
     return (
       <div className="scene-file-ready">
@@ -99,11 +51,9 @@ export default function SceneUploader({ onSceneReady, onVideoReady }) {
     );
   }
 
+  /* ── Dropzone ── */
   return (
     <div className="scene-zip-upload">
-      <button className="scene-uploader-back" onClick={() => setMode(null)}>
-        ← Change input type
-      </button>
       <div
         {...getRootProps()}
         className={`scene-dropzone ${dropzoneDrag ? 'scene-dropzone--active' : ''}`}

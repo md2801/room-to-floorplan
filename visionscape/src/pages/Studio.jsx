@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import SceneUploader from '../components/SceneUploader';
-import VideoUploader from '../components/VideoUploader';
 import ValidationPanel from '../components/ValidationPanel';
 import ProcessingPanel from '../components/ProcessingPanel';
 import FloorplanViewer from '../components/FloorplanViewer';
@@ -8,76 +7,51 @@ import { validateSceneZip } from '../services/api.js';
 import './Studio.css';
 
 /**
- * Steps:
- *  Scene mode:  Upload ZIP → Validate → Select Room → Generate → Results
- *  Video mode:  Upload/Record Video → Generate → Results
+ * Steps: Upload ZIP → Validate → Generate → Results
+ *
+ * After generation the backend returns { svg_url, png_url, scene_name }.
+ * These are stored in `generationResult` and passed to FloorplanViewer
+ * which fetches and renders the real SVG inline.
  */
 export default function Studio() {
-  // Upload state
-  const [inputMode, setInputMode] = useState(null); // null | 'scene' | 'video'
   const [sceneFile, setSceneFile] = useState(null);
-  const [videoFile, setVideoFile] = useState(null);
-  const [videoUrl, setVideoUrl] = useState(null);
 
-  // Scene validation state
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState(null);
   const [validationError, setValidationError] = useState(null);
 
-  // Room selection
-  const [selectedRoomId, setSelectedRoomId] = useState(null);
+  // Holds { svg_url, png_url, scene_name } returned by the backend.
+  const [generationResult, setGenerationResult] = useState(null);
 
-  // Generation state
-  const [isGenerated, setIsGenerated] = useState(false);
-
-  const [png, setPng] = useState(null);
-  const [svg, setSvg] = useState(null);
-  const [downloadPng, setDownloadPng] = useState(null);
-  const [downloadSvg, setDownloadSvg] = useState(null);
   // Derived step for the indicator
   const step = (() => {
-    if (isGenerated) return 3;
-    if (inputMode === 'scene') {
-      if (!sceneFile) return 0;
-      if (!validation) return 1;
-      return 2;
-    }
-    if (inputMode === 'video') {
-      if (!videoFile) return 0;
-      return 2;
-    }
-    return 0;
+    if (generationResult) return 3;
+    if (!sceneFile) return 0;
+    if (!validation) return 1;
+    return 2;
   })();
 
-  const STEPS = inputMode === 'video'
-    ? ['Input', 'Generate', 'Results']
-    : ['Upload ZIP', 'Validate', 'Generate', 'Results'];
+  const STEPS = ['Upload ZIP', 'Validate', 'Generate', 'Results'];
 
-  // ── Handlers ──────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────
 
   const handleSceneReady = async (file) => {
     if (!file) {
       setSceneFile(null);
       setValidation(null);
       setValidationError(null);
-      setSelectedRoomId(null);
-      setInputMode(null);
+      setGenerationResult(null);
       return;
     }
-    setInputMode('scene');
     setSceneFile(file);
     setValidation(null);
     setValidationError(null);
-    setSelectedRoomId(null);
-    setIsGenerated(false);
+    setGenerationResult(null);
     setValidating(true);
 
     try {
       const result = await validateSceneZip(file);
       setValidation(result);
-      // Auto-select first valid room
-      const firstValid = result.rooms.find((r) => r.isValid);
-      if (firstValid) setSelectedRoomId(firstValid.roomId);
     } catch (err) {
       setValidationError('Unexpected error during validation: ' + err.message);
     } finally {
@@ -85,39 +59,22 @@ export default function Studio() {
     }
   };
 
-  const handleVideoReady = (file, url) => {
-    if (!file) {
-      setVideoFile(null);
-      setVideoUrl(null);
-      if (!sceneFile) setInputMode(null);
-      return;
-    }
-    setInputMode('video');
-    setVideoFile(file);
-    setVideoUrl(url);
-    setIsGenerated(false);
-  };
-
+  /**
+   * Called by ProcessingPanel when the backend inference succeeds.
+   * @param {{ svg_url: string, png_url: string, scene_name: string }} result
+   */
   const handleGenerationComplete = (result) => {
-    setPng(result?.png || null);
-    setSvg(result?.svg || null);
-    setDownloadPng(result?.download_png || null);
-    setDownloadSvg(result?.download_svg || null);
-    setIsGenerated(true);
+    setGenerationResult(result);
   };
 
   const handleReset = () => {
-    setInputMode(null);
     setSceneFile(null);
-    setVideoFile(null);
-    setVideoUrl(null);
     setValidation(null);
     setValidationError(null);
-    setSelectedRoomId(null);
-    setIsGenerated(false);
+    setGenerationResult(null);
   };
 
-  // ── Render ─────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────
 
   return (
     <main className="studio">
@@ -127,7 +84,10 @@ export default function Studio() {
           const done = step > i;
           const active = step === i;
           return (
-            <div key={i} className={`step-item ${active ? 'step-item--active' : ''} ${done ? 'step-item--done' : ''}`}>
+            <div
+              key={i}
+              className={`step-item ${active ? 'step-item--active' : ''} ${done ? 'step-item--done' : ''}`}
+            >
               <div className="step-item__num">{done ? '✓' : i + 1}</div>
               <span className="step-item__label">{label}</span>
               {i < STEPS.length - 1 && (
@@ -147,20 +107,17 @@ export default function Studio() {
             <div className="panel__head">
               <span className="panel__tag">01</span>
               <h2 className="panel__title">Scene Input</h2>
-              {(sceneFile || videoFile) && (
+              {sceneFile && (
                 <button className="panel__reset" onClick={handleReset}>Reset</button>
               )}
             </div>
             <div className="panel__body">
-              <SceneUploader
-                onSceneReady={handleSceneReady}
-                onVideoReady={handleVideoReady}
-              />
+              <SceneUploader onSceneReady={handleSceneReady} />
             </div>
           </div>
 
-          {/* Panel 02: Validation (scene mode only) */}
-          {inputMode === 'scene' && sceneFile && (
+          {/* Panel 02: Validation */}
+          {sceneFile && (
             <div className="panel panel--validation">
               <div className="panel__head">
                 <span className="panel__tag">02</span>
@@ -177,42 +134,26 @@ export default function Studio() {
                   <p className="validation-error-msg">{validationError}</p>
                 )}
                 {validation && !validating && (
-                  <ValidationPanel
-                    validation={validation}
-                    selectedRoomId={selectedRoomId}
-                    onRoomSelect={setSelectedRoomId}
-                  />
+                  <ValidationPanel validation={validation} />
                 )}
               </div>
             </div>
           )}
 
           {/* Panel 03: Generate */}
-          {((inputMode === 'scene' && validation) || (inputMode === 'video' && videoFile)) && (
+          {validation && !generationResult && (
             <div className="panel panel--generate">
               <div className="panel__head">
-                <span className="panel__tag">{inputMode === 'scene' ? '03' : '02'}</span>
+                <span className="panel__tag">03</span>
                 <h2 className="panel__title">Generate</h2>
               </div>
               <div className="panel__body">
-                {inputMode === 'scene' && (
-                  <p className="panel__hint">
-                    {selectedRoomId
-                      ? `Ready to generate floorplan for room ${selectedRoomId} from ${validation.sceneName}.`
-                      : 'Select a valid room from the validation panel above.'}
-                  </p>
-                )}
-                {inputMode === 'video' && (
-                  <p className="panel__hint">
-                    Video loaded. Click below to begin AI floorplan generation.
-                  </p>
-                )}
+                <p className="panel__hint">
+                  Scene validated. Click below to generate the combined floorplan.
+                </p>
                 <ProcessingPanel
-                  mode={inputMode}
+                  mode="scene"
                   sceneMetadata={validation}
-                  selectedRoomId={selectedRoomId}
-                  sceneFile={sceneFile}
-                  videoFile={videoFile}
                   onComplete={handleGenerationComplete}
                 />
               </div>
@@ -222,7 +163,7 @@ export default function Studio() {
 
         {/* ── Main display ── */}
         <section className="studio__main">
-          {!isGenerated ? (
+          {!generationResult ? (
             <div className="studio__empty">
               <div className="studio__empty-inner">
                 <div className="studio__empty-grid" aria-hidden="true">
@@ -244,17 +185,13 @@ export default function Studio() {
                     {validating ? 'Validating scene ZIP…' : 'Floorplan will appear here'}
                   </p>
                   <p className="studio__empty-sub">
-                    {inputMode === null
-                      ? 'Upload a Structured3D scene ZIP or a room walkthrough video'
-                      : inputMode === 'scene'
-                      ? validation
-                        ? selectedRoomId
-                          ? `Room ${selectedRoomId} selected — click Generate to begin`
-                          : 'Select a valid room from the sidebar'
-                        : validating
-                        ? 'Validating ZIP contents…'
-                        : 'Upload a scene ZIP to validate'
-                      : 'Upload complete — click Generate'}
+                    {!sceneFile
+                      ? 'Upload a Structured3D scene ZIP to begin'
+                      : validation
+                      ? 'Scene validated — click Generate to produce the floorplan'
+                      : validating
+                      ? 'Validating ZIP contents…'
+                      : 'Upload a scene ZIP to validate'}
                   </p>
                 </div>
               </div>
@@ -262,12 +199,9 @@ export default function Studio() {
           ) : (
             <div className="studio__result">
               <FloorplanViewer
-                sceneName={validation?.sceneName}
-                roomId={selectedRoomId}
-                png={png}
-                svg={svg}
-                download_png={downloadPng}
-                download_svg={downloadSvg}
+                sceneName={generationResult.scene_name}
+                svgUrl={generationResult.svg_url}
+                pngUrl={generationResult.png_url}
               />
             </div>
           )}

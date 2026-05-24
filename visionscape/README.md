@@ -22,16 +22,15 @@ Open http://localhost:5173
 src/
 ├── components/
 │   ├── Navbar.jsx / .css             # Sticky blurred top navigation
-│   ├── SceneUploader.jsx / .css      # Upload mode selector (ZIP or Video)
-│   ├── VideoUploader.jsx / .css      # Video upload + camera recording
+│   ├── SceneUploader.jsx / .css      # Upload mode selector (ZIP)
 │   ├── ValidationPanel.jsx / .css    # Scene ZIP validation result display
 │   ├── ProcessingPanel.jsx / .css    # Generate button + animated progress
-│   └── FloorplanViewer.jsx / .css    # 3-mode floorplan display (SVG/CSS)
+│   └── FloorplanViewer.jsx / .css    # Without furniture floorplan display (SVG/PNG)
 ├── pages/
 │   ├── Home.jsx / .css               # Landing page
 │   └── Studio.jsx / .css            # Main workspace (full workflow)
 ├── services/
-│   └── api.js                        # All mock API functions
+│   └── api.js                        # All API functions
 ├── styles/
 │   └── global.css                    # Design tokens + CSS reset
 └── main.jsx / App.jsx
@@ -41,7 +40,7 @@ src/
 
 ## Supported Input Modes
 
-### Mode A — Structured3D Scene ZIP (Primary)
+### Mode — Structured3D Scene ZIP (Primary)
 
 Upload a `scene_XXXXX.zip` archive conforming to the Structured3D dataset format.
 
@@ -59,9 +58,9 @@ scene_00400/
             │   ├── depth.png           ← required
             │   ├── semantic.png        ← required
             │   ├── normal.png          ← required
-            │   ├── rgb_coldlight.png   (optional)
-            │   ├── rgb_warmlight.png   (optional)
-            │   └── albedo.png          (optional)
+            │   ├── rgb_coldlight.png   ← required
+            │   ├── rgb_warmlight.png   ← required
+            │   └── albedo.png          ← required
             ├── empty/                  (optional)
             └── simple/                 (optional)
 ```
@@ -72,25 +71,20 @@ scene_00400/
 3. Must contain `2D_rendering/`
 4. Detects all room IDs under `2D_rendering/`
 5. Per room: checks for `panorama/` folder
-6. Per panorama: checks all 4 required files (`camera_xyz.txt`, `layout.txt`, `full/rgb_rawlight.png`, `full/depth.png`, `full/semantic.png`, `full/normal.png`)
+6. Per panorama: checks all 4 required files (`camera_xyz.txt`, `layout.txt`, `full/rgb_rawlight.png`, `full/depth.png`, `full/semantic.png`, `full/normal.png`, `full/rgb_coldlight.png`, `full/rgb_warmlight.png`, `full/albedo.png`)
 7. Mac metadata ignored: `__MACOSX/`, `.DS_Store`, `._*`, dotfiles
 
 **Status badges:**
-- Icon - ✅ **Valid Scene** — all rooms pass all required checks
-- Icon - ⚠️ **Partially Valid** — at least one valid room, some issues
-- Icon - ❌ **Invalid Scene** — missing critical structure
+- ✅ **Valid Scene** — all rooms pass all required checks
+- ⚠️ **Partially Valid** — at least one valid room, some issues
+- ❌ **Invalid Scene** — missing critical structure
 
-### Mode B — Video Walkthrough (Legacy)
-
-Upload MP4/MOV/WebM or record live via device camera.
-
-**Note:** This mode is retained for future work, where the model can be extended to support direct floorplan generation from real-world video inputs.
 ---
 
 ## User Workflow (Scene ZIP mode)
 
 ```
-Open Studio
+Open New Project
   → Select "Structured3D Scene ZIP"
   → Upload scene_XXXXX.zip
   → [Auto] ZIP is validated in-browser via JSZip
@@ -98,9 +92,8 @@ Open Studio
        scene name · rooms found · valid/invalid per room
        missing files · optional available
        status badge (Valid / Partial / Invalid)
-  → Select a room from the room chip selector
   → Click "Generate Floorplan"
-  → Animated progress bar runs (mock 7-step pipeline)
+  → Animated progress bar runs ( 7-step pipeline)
   → FloorplanViewer renders:
        · Without Furniture (dimensioned SVG)
 ```
@@ -114,7 +107,6 @@ Open Studio
 | `validateSceneZip(file)` | Reads ZIP in-browser with JSZip, validates Structured3D structure, returns full result object |
 | `extractPreviewImage(zip, path)` | Extracts a PNG from ZIP as an object URL for preview thumbnails |
 | `generateFloorplanFromScene(metadata, roomId, onProgress)` | Mock async generation with 7 progress steps |
-| `uploadVideo(file)` | Legacy mock video upload |
 | `generateFloorplan(fileId, onProgress)` | Legacy mock video floorplan generation |
 
 ---

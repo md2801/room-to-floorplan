@@ -1,13 +1,17 @@
-// VisionScape Mock API Services
+// ─── VisionScape API Services ────────────────────────────────────────────────
+// Connects to the Flask backend running on http://localhost:5000
+// The validateSceneZip() function runs entirely in the browser (no backend needed).
+// generateFloorplanFromScene() sends the ZIP to the backend and returns real URLs.
+
 import JSZip from 'jszip';
 
-// Helpers
+// With the Vite proxy configured in vite.config.js, we can use relative URLs.
+// This avoids CORS issues during development.
+const BACKEND_URL = '';
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Returns true if a path segment should be ignored (Mac metadata) */
+/** Returns true if a ZIP path segment is macOS metadata junk. */
 function isIgnored(path) {
   const parts = path.split('/');
   return parts.some(
@@ -19,7 +23,7 @@ function isIgnored(path) {
   );
 }
 
-// Scene ZIP Validation
+// ── Scene ZIP Validation (runs in browser, no backend needed) ────────────────
 
 const REQUIRED_PANORAMA_FILES = [
   'camera_xyz.txt',
@@ -33,10 +37,7 @@ const REQUIRED_PANORAMA_FILES = [
   'full/albedo.png',
 ];
 
-const OPTIONAL_PANORAMA_FILES = [
-  'empty/',
-  'simple/',
-];
+const OPTIONAL_PANORAMA_FILES = ['empty/', 'simple/'];
 
 export async function validateSceneZip(file) {
   const result = {
@@ -47,6 +48,8 @@ export async function validateSceneZip(file) {
     topLevelErrors: [],
     hasAnnotation3d: false,
     has2DRendering: false,
+    // Keep a reference to the raw File so we can upload it later.
+    _file: file,
     _zip: null,
   };
 
@@ -60,9 +63,7 @@ export async function validateSceneZip(file) {
 
   const allPaths = new Set();
   zip.forEach((relativePath) => {
-    if (!isIgnored(relativePath)) {
-      allPaths.add(relativePath);
-    }
+    if (!isIgnored(relativePath)) allPaths.add(relativePath);
   });
 
   // 1. Top-level scene folder (scene_XXXXX)
@@ -93,14 +94,14 @@ export async function validateSceneZip(file) {
   const annotationPath = `${sceneRoot}annotation_3d.json`;
   result.hasAnnotation3d = allPaths.has(annotationPath);
   if (!result.hasAnnotation3d) {
-    result.topLevelErrors.push(`Missing: annotation_3d.json`);
+    result.topLevelErrors.push('Missing: annotation_3d.json');
   }
 
   // 3. 2D_rendering/
   const renderingRoot = `${sceneRoot}2D_rendering/`;
   result.has2DRendering = allPaths.has(renderingRoot);
   if (!result.has2DRendering) {
-    result.topLevelErrors.push(`Missing: 2D_rendering/ folder`);
+    result.topLevelErrors.push('Missing: 2D_rendering/ folder');
     result.status = result.hasAnnotation3d ? 'partial' : 'invalid';
     return result;
   }
@@ -148,26 +149,22 @@ export async function validateSceneZip(file) {
 
     for (const relPath of REQUIRED_PANORAMA_FILES) {
       const fullPath = `${panoramaRoot}${relPath}`;
-      if (!allPaths.has(fullPath)) {
-        roomResult.missingRequired.push(relPath);
-      }
+      if (!allPaths.has(fullPath)) roomResult.missingRequired.push(relPath);
     }
 
     for (const relPath of OPTIONAL_PANORAMA_FILES) {
       const fullPath = `${panoramaRoot}${relPath}`;
-      if (allPaths.has(fullPath)) {
-        roomResult.availableOptional.push(relPath);
-      }
+      if (allPaths.has(fullPath)) roomResult.availableOptional.push(relPath);
     }
 
     const previewMap = {
-      rgb_rawlight: `${panoramaRoot}full/rgb_rawlight.png`,
+      rgb_rawlight:  `${panoramaRoot}full/rgb_rawlight.png`,
       rgb_coldlight: `${panoramaRoot}full/rgb_coldlight.png`,
       rgb_warmlight: `${panoramaRoot}full/rgb_warmlight.png`,
-      depth: `${panoramaRoot}full/depth.png`,
-      semantic: `${panoramaRoot}full/semantic.png`,
-      normal: `${panoramaRoot}full/normal.png`,
-      albedo: `${panoramaRoot}full/albedo.png`,
+      depth:         `${panoramaRoot}full/depth.png`,
+      semantic:      `${panoramaRoot}full/semantic.png`,
+      normal:        `${panoramaRoot}full/normal.png`,
+      albedo:        `${panoramaRoot}full/albedo.png`,
     };
 
     for (const [key, path] of Object.entries(previewMap)) {
@@ -207,71 +204,84 @@ export async function extractPreviewImage(zip, path) {
   }
 }
 
-// Async Method to call backend API for floorplan generation 
-// from scene mode. Progress updates are sent via the onProgress callback (progress: 0-100, message: string).
+// ── Real Inference API Call ──────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:5000";
-export async function generateFloorplanFromScene(sceneMetadata, selectedRoomId, sceneFile, onProgress) {
-  onProgress?.(5, 'Starting floorplan generation…');
-
-  const formData = new FormData();
-  formData.append('sceneZip', sceneFile);
-  formData.append('sceneName', sceneMetadata.sceneName);
-  formData.append('roomId', selectedRoomId);
-
-  const response = await fetch(`${API_BASE}/inferFloorplan`, {
-    method: "POST",
-    /*body: JSON.stringify({
-        sceneName: sceneMetadata.sceneName,
-        roomId: selectedRoomId,
-      })*/
-    body: formData
-  });
-
-  onProgress?.(80, "Rendering floorplan...");
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Floorplan generation failed");
+/**
+ * Upload the scene ZIP to the Flask backend, run inference, and return the
+ * real SVG/PNG URLs from the server.
+ *
+ * @param {object}   sceneMetadata   Result from validateSceneZip() — must contain _file
+ * @param {null}     _selectedRoomId  Not used (full-scene inference)
+ * @param {function} onProgress       (percent: number, message: string) => void
+ * @returns {{ success, scene_name, svg_url, png_url }}
+ */
+export async function generateFloorplanFromScene(sceneMetadata, _selectedRoomId, onProgress) {
+  const file = sceneMetadata?._file;
+  if (!file) {
+    throw new Error('No scene file attached to sceneMetadata. Was validateSceneZip() called first?');
   }
 
-  const data = await response.json();
+  // ── Staged progress messages (the actual work happens on the server) ──
+  const stages = [
+    [5,  'Uploading scene ZIP to backend…'],
+    [12, 'Extracting scene archive…'],
+    [20, 'Loading model checkpoint…'],
+    [30, 'Building bird\'s-eye-view observation…'],
+    [45, 'Running neural inference…'],
+    [60, 'Detecting room polygons…'],
+    [72, 'Snapping wall axes…'],
+    [82, 'Selecting best layout…'],
+    [90, 'Rendering SVG floorplan…'],
+    [95, 'Saving output files…'],
+  ];
 
-  onProgress?.(100, "Floorplan generation complete!!");
+  // Animate progress while the fetch is in flight.
+  let stageIndex = 0;
+  const TICK_MS = 800;
+  const progressInterval = setInterval(() => {
+    if (stageIndex < stages.length) {
+      const [pct, msg] = stages[stageIndex];
+      onProgress?.(pct, msg);
+      stageIndex++;
+    }
+  }, TICK_MS);
+
+  let data;
+  try {
+    const formData = new FormData();
+    formData.append('sceneZip', file, file.name);
+
+    const response = await fetch(`${BACKEND_URL}/inferFloorplan`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || `Server returned HTTP ${response.status}`);
+    }
+  } finally {
+    clearInterval(progressInterval);
+  }
+
+  onProgress?.(100, 'Complete');
 
   return {
-    success: true,
-    floorplanId: `fp_${sceneMetadata.sceneName}_${selectedRoomId}_${Date.now()}`,
-    sceneName: sceneMetadata.sceneName,
-    roomId: selectedRoomId,
-    png: data.png,
-    svg: data.svg,
-    download_png: data.download_png,
-    download_svg: data.download_svg
+    success:    data.success,
+    scene_name: data.scene_name,
+    svg_url:    data.svg_url,
+    png_url:    data.png_url,
   };
 }
 
-// Legacy video API
+// ── Legacy stubs (kept to avoid import errors in any other file) ─────────────
+
 export async function uploadVideo(file) {
-  await delay(1200);
   return { success: true, fileId: `vid_${Date.now()}`, filename: file.name, size: file.size };
 }
 
-export async function generateFloorplan(fileId, onProgress) {
-  const steps = [
-    { progress: 10, message: 'Extracting frames…' },
-    { progress: 28, message: 'Detecting room boundaries…' },
-    { progress: 45, message: 'Mapping spatial relationships…' },
-    { progress: 78, message: 'Rendering floorplan…' },
-    { progress: 90, message: 'Generating AI floorplan' },
-    { progress: 100, message: 'Complete!' },
-  ];
-  for (const step of steps) {
-    await delay(600 + Math.random() * 400);
-    onProgress?.(step.progress, step.message);
-  }
-  return { 
-    success: true, 
-    floorplanId: `fp_${Date.now()}` 
-  };
+export async function generateFloorplan(_fileId, onProgress) {
+  onProgress?.(100, 'Complete');
+  return { success: true, floorplanId: `fp_${Date.now()}` };
 }

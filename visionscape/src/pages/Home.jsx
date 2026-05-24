@@ -11,7 +11,7 @@ const FEATURES = [
   {
     icon: Layers,
     title: 'Floorplan Output',
-    desc: 'Generate an annotated floorplan from depth maps, semantic labels, and room boundaries.',
+    desc: 'Generate a combined architectural floorplan from depth maps, semantic labels, and room boundaries.',
   },
   {
     icon: Box,
@@ -33,13 +33,13 @@ export default function Home() {
         </div>
 
         <h1 className="hero__title">
-          Transform any room
+          Transform any scene
           <br />
           <em>into a floorplan.</em>
         </h1>
 
         <p className="hero__desc">
-          Point your camera, walk your space. VisionScape analyses your video
+          Upload a Structured3D scene ZIP. VisionScape analyses the full scene
           and generates a precise architectural floorplan in seconds.
         </p>
 
@@ -47,9 +47,6 @@ export default function Home() {
           <button className="btn-primary" onClick={() => navigate('/studio')}>
             Start a Project
             <ArrowRight size={16} />
-          </button>
-          <button className="btn-ghost" onClick={() => navigate('/studio')}>
-            View Demo
           </button>
         </div>
 
@@ -73,19 +70,6 @@ export default function Home() {
               <p className="feature-card__desc">{desc}</p>
             </div>
           ))}
-        </div>
-      </section>
-
-      {/* CTA strip */}
-      <section className="cta-strip">
-        <div className="cta-strip__inner">
-          <div>
-            <p className="cta-strip__label">Ready to begin?</p>
-            <p className="cta-strip__sub">No account required. Just your video.</p>
-          </div>
-          <button className="btn-primary" onClick={() => navigate('/studio')}>
-            Open Studio <ArrowRight size={15} />
-          </button>
         </div>
       </section>
     </main>

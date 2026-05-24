@@ -4,74 +4,56 @@ import './ProcessingPanel.css';
 
 /**
  * Handles the "Generate Floorplan" button and animated progress bar.
- * Supports both scene ZIP mode and legacy video mode.
+ * On success it calls onComplete({ svg_url, png_url, scene_name }).
  *
  * Props:
- *  - mode: 'scene' | 'video'
- *  - sceneMetadata: validation result (scene mode)
- *  - selectedRoomId: string (scene mode)
- *  - videoFile: File (video mode)
- *  - onComplete: () => void
+ *  - sceneMetadata : result from validateSceneZip() — must include _file
+ *  - onComplete    : ({ svg_url, png_url, scene_name }) => void
  */
-export default function ProcessingPanel({
-  mode = 'video',
-  sceneMetadata,
-  selectedRoomId,
-  sceneFile,
-  videoFile,
-  onComplete,
-}) {
+export default function ProcessingPanel({ sceneMetadata, onComplete }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const [preview_png, setPreviewPng] = useState(null);
-  const [svg, setSvg] = useState(null);
-
-  const isDisabled = mode === 'scene'
-    ? !sceneMetadata || !selectedRoomId
-    : !videoFile;
+  const isDisabled = !sceneMetadata;
 
   const handleGenerate = async () => {
     if (isDisabled || isProcessing) return;
     setIsProcessing(true);
     setProgress(0);
     setStatusMsg('');
+    setErrorMsg('');
 
-    if (mode === 'scene') {
+    try {
       const { generateFloorplanFromScene } = await import('../services/api.js');
       const result = await generateFloorplanFromScene(
-        sceneMetadata, 
-        selectedRoomId, 
-        sceneFile, 
+        sceneMetadata,
+        null,
         (p, msg) => {
-        setProgress(p);
-        setStatusMsg(msg);
-      });
+          setProgress(p);
+          setStatusMsg(msg);
+        }
+      );
 
-      console.log("Inference result:", result);
-      onComplete(result);
-      return;
-    } else {
-      const { uploadVideo, generateFloorplan } = await import('../services/api.js');
-      const upload = await uploadVideo(videoFile);
-      await generateFloorplan(upload.fileId, (p, msg) => {
-        setProgress(p);
-        setStatusMsg(msg);
+      setIsProcessing(false);
+      onComplete({
+        svg_url:    result.svg_url,
+        png_url:    result.png_url,
+        scene_name: result.scene_name,
       });
+    } catch (err) {
+      setIsProcessing(false);
+      setProgress(0);
+      setStatusMsg('');
+      setErrorMsg(err.message || 'An unexpected error occurred.');
     }
-
-    setIsProcessing(false);
-    onComplete();
   };
 
   return (
     <div className="processing-panel">
       {!isProcessing && progress === 0 && (
         <>
-          {mode === 'scene' && !selectedRoomId && (
-            <p className="processing-panel__hint">Select a room above to enable generation.</p>
-          )}
           <button
             className="generate-btn"
             onClick={handleGenerate}
@@ -81,6 +63,9 @@ export default function ProcessingPanel({
             <span>Generate Floorplan</span>
             <ChevronRight size={15} className="generate-btn__arrow" />
           </button>
+          {errorMsg && (
+            <p className="processing-error">{errorMsg}</p>
+          )}
         </>
       )}
 

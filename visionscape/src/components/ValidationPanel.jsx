@@ -9,20 +9,17 @@ import './ValidationPanel.css';
 
 /**
  * Displays the full validation result from validateSceneZip().
- * Also handles room selection and shows image previews.
+ * Shows scene structure checks and per-room details.
+ * Room selection for generation has been removed — the model generates
+ * one combined floorplan from the full scene.
  */
-export default function ValidationPanel({
-  validation,
-  selectedRoomId,
-  onRoomSelect,
-}) {
+export default function ValidationPanel({ validation }) {
   const [expandedRoom, setExpandedRoom] = useState(null);
-  const [previews, setPreviews] = useState({});
+  const [previews, setPreviews] = useState({}); // roomId -> { rgb, depth, semantic, normal }
   const [loadingPreviews, setLoadingPreviews] = useState(false);
 
   const { status, sceneName, roomIds, rooms, topLevelErrors, hasAnnotation3d, has2DRendering } = validation;
   const validRooms = rooms.filter((r) => r.isValid);
-  const invalidRooms = rooms.filter((r) => !r.isValid);
 
   // Load previews when a room is expanded
   useEffect(() => {
@@ -108,27 +105,6 @@ export default function ValidationPanel({
         </div>
       )}
 
-      {/* ── Room selector ── */}
-      {validRooms.length > 0 && (
-        <div className="room-selector">
-          <label className="room-selector__label">
-            Select room to generate floorplan
-          </label>
-          <div className="room-selector__grid">
-            {validRooms.map((r) => (
-              <button
-                key={r.roomId}
-                className={`room-chip ${selectedRoomId === r.roomId ? 'room-chip--active' : ''}`}
-                onClick={() => onRoomSelect(r.roomId)}
-              >
-                <Folder size={11} />
-                Room {r.roomId}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* ── Room details accordion ── */}
       <div className="room-accordion">
         <p className="room-accordion__heading">Room Details</p>
@@ -159,7 +135,7 @@ export default function ValidationPanel({
 
             {expandedRoom === room.roomId && (
               <div className="room-item__body">
-                {/* Missing required files */}
+                {/* Missing files */}
                 {room.missingRequired.length > 0 && (
                   <div className="room-item__section">
                     <p className="room-item__section-title room-item__section-title--error">
@@ -173,7 +149,7 @@ export default function ValidationPanel({
                   </div>
                 )}
 
-                {/* Required files confirmed present */}
+                {/* Available files */}
                 {room.availableFull.length > 0 && (
                   <div className="room-item__section">
                     <p className="room-item__section-title room-item__section-title--ok">
@@ -187,7 +163,7 @@ export default function ValidationPanel({
                   </div>
                 )}
 
-                {/* Optional folders */}
+                {/* Optional */}
                 {room.availableOptional.length > 0 && (
                   <div className="room-item__section">
                     <p className="room-item__section-title">
@@ -201,7 +177,7 @@ export default function ValidationPanel({
                   </div>
                 )}
 
-                {/* Panorama image previews */}
+                {/* Image previews */}
                 {room.isValid && (
                   <div className="room-item__previews">
                     <p className="room-item__section-title">
