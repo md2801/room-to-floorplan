@@ -10,3 +10,4 @@ __pycache__/
 .idea
 visionscape/node_modules
 extracted
+outputs

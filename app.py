@@ -23,10 +23,15 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE_DIR     = Path(__file__).resolve().parent
-CHECKPOINT   = BASE_DIR / "best_ema.pt"
-EXTRACT_DIR  = BASE_DIR / "extracted"
-OUTPUT_ROOT  = BASE_DIR / "outputs"
+BASE_DIR = Path(__file__).resolve().parent
+
+# FROM AAQIL: commented the og checkpoint with my checkpoint path for testing.
+# If youre testing this, comment my path instead of overwriting it and use your own path
+CHECKPOINT = BASE_DIR / "output" / "v7" / "artifacts" / "roomtofp_polygon_v7_512_c16_final" / "best_ema.pt"
+# CHECKPOINT = BASE_DIR / "best_ema.pt"
+
+EXTRACT_DIR = BASE_DIR / "extracted"
+OUTPUT_ROOT = BASE_DIR / "outputs"
 INFER_SCRIPT = BASE_DIR / "infer_roomtofp_from_scene.py"
 
 app = Flask(__name__)
@@ -229,8 +234,8 @@ def serve_output(filename: str):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"[VisionScape] BASE_DIR        : {BASE_DIR}")
-    print(f"[VisionScape] CHECKPOINT      : {CHECKPOINT}")
+    print(f"[VisionScape] BASE_DIR: {BASE_DIR}")
+    print(f"[VisionScape] CHECKPOINT: {CHECKPOINT}")
     print(f"[VisionScape] CHECKPOINT exists: {CHECKPOINT.exists()}")
-    print(f"[VisionScape] OUTPUT_ROOT     : {OUTPUT_ROOT}")
+    print(f"[VisionScape] OUTPUT_ROOT: {OUTPUT_ROOT}")
     app.run(debug=True, port=5000)
