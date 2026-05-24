@@ -1756,7 +1756,7 @@ def main() -> None:
                 print("[EMA] loaded EMA state from checkpoint")
             else:
                 print("[EMA] no ema_state_dict found; initialized EMA from loaded model weights")
-        else:1
+        else:
             print("[EMA] initialized EMA from loaded model weights")
 
     # v8 fine-tuning safety:
