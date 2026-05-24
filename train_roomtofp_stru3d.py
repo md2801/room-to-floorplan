@@ -1724,6 +1724,8 @@ def main() -> None:
 
     ema = ModelEMA(model, decay=args.ema_decay) if args.ema else None
 
+    ema = None
+
     start_epoch = 0
     best_val = float("inf")
     best_epoch = 0
@@ -1738,8 +1740,24 @@ def main() -> None:
             optimizer,
             scheduler,
             model_only=args.resume_model_only,
-            ema=ema,
+            ema=None,
         )
+
+    # v8 FIX:
+    # Create EMA only after loading the resume checkpoint.
+    # This ensures EMA starts from the loaded v7 best_ema weights, not random model weights.
+    if args.ema:
+        ema = ModelEMA(model, decay=args.ema_decay)
+
+        if args.resume and not args.resume_model_only:
+            ckpt_for_ema = torch.load(Path(args.resume), map_location="cpu")
+            if ckpt_for_ema.get("ema_state_dict") is not None:
+                ema.load_state_dict(ckpt_for_ema["ema_state_dict"])
+                print("[EMA] loaded EMA state from checkpoint")
+            else:
+                print("[EMA] no ema_state_dict found; initialized EMA from loaded model weights")
+        else:1
+            print("[EMA] initialized EMA from loaded model weights")
 
     # v8 fine-tuning safety:
     # If using --resume-model-only, optimiser/scheduler should start fresh.
