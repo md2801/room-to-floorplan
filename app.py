@@ -9,16 +9,23 @@ app = Flask(__name__)
 CORS(app)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+print(BASE_DIR)
 
 '''Change CHECKPOINT to desired paths,
 but make sure that the CHECKPOINT path is valid and exist on your system before running the app.
 '''
 CHECKPOINT = os.path.join(
     BASE_DIR,
-    'best_ema.pt'
+    "output",
+    "v7",
+    "artifacts",
+    "roomtofp_polygon_v7_512_c16_final",
+    "best_ema.pt"
 )
+print(CHECKPOINT)
 
 OUTPUT_ROOT = os.path.join(BASE_DIR, "output", "inference")
+print(OUTPUT_ROOT)
 
 '''Defining the endpoint for floorplan inference 
 which will run the infer_roomtofp_from_scene.py script 
@@ -78,12 +85,16 @@ def infer_floorplan():
         "--layout-candidates", "balanced",
         "--mask-threshold", "0.50",
         "--min-room-area-px", "80",
-        "--opening-snap-distance-px", "28",
-        "--min-opening-area-px", "12",
-        "--min-opening-length-px", "18",
-        "--bev-opening-weight", "0.5",
+        "--opening-snap-distance-px", "22",
+        "--min-opening-area-px", "18",
+        "--min-opening-length-px", "20",
+        "--bev-opening-weight", "0.35",
+        "--merge-opening-distance-px", "18",
+        "--max-opening-length-px", "80",
         "--snap-axis-threshold-px", "8",
-        "--simplify-eps-px", "2"
+        "--simplify-eps-px", "2",
+        "--debug-layout-candidates",
+        "--debug-layout-candidate-previews",
     ]
 
     # Run the command using subprocess
