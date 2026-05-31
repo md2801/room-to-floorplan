@@ -76,11 +76,7 @@ ROOM_TYPES = [
 ]
 
 
-# -----------------------------
 # Utility helpers
-# -----------------------------
-
-
 def ensure_chw_mask_np(mask: np.ndarray, name: str = "mask") -> np.ndarray:
     """
     v7/v8 fix:
@@ -191,11 +187,7 @@ def average_checkpoints(checkpoint_paths: list[Path], output_path: Path) -> None
     print(f"[SOUP] saved averaged checkpoint to: {output_path}")
 
 
-# -----------------------------
 # Dataset + v8 augmentations
-# -----------------------------
-
-
 class RoomToFPNPZDataset(Dataset):
     def __init__(
         self,
@@ -430,11 +422,7 @@ def compute_room_class_weights(
     return torch.tensor(weights, dtype=torch.float32)
 
 
-# -----------------------------
 # Loss helpers
-# -----------------------------
-
-
 @dataclass
 class LossConfig:
     mask_loss: str = "focal_dice"
@@ -1012,11 +1000,7 @@ def compute_losses(
     return loss, parts
 
 
-# -----------------------------
 # EMA
-# -----------------------------
-
-
 class ModelEMA:
     """
     v7/v8:
@@ -1096,11 +1080,7 @@ class ModelEMA:
         self.backup = {}
 
 
-# -----------------------------
 # Training helpers
-# -----------------------------
-
-
 def freeze_backbone_v8(model: nn.Module, freeze: bool = True) -> None:
     """
     v8 improvement:
@@ -1251,11 +1231,7 @@ def run_epoch(
     return final
 
 
-# -----------------------------
 # Checkpoint helpers
-# -----------------------------
-
-
 def save_checkpoint(
     path: Path,
     model,
@@ -1469,11 +1445,7 @@ def save_final_soup_if_requested(out: Path, args) -> None:
     average_checkpoints(existing, out / "final_soup_ema.pt")
 
 
-# -----------------------------
 # Main
-# -----------------------------
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train/fine-tune RoomToFP v8 polygon model")
 

@@ -1957,6 +1957,76 @@ def _write_vector_svg(path: Path, rooms: list[dict], wall_segments: list[dict], 
     path.write_text("\n".join(parts), encoding="utf-8")
 
 
+def _extract_raw_predicted_rooms(
+    pred: dict,
+    grid_size: int,
+    room_thr: float,
+    corner_thr: float,
+    min_room_area_px: float = 0.0,
+) -> list[dict]:
+    """
+    Extract raw model room polygons directly from the corner head.
+
+    This deliberately avoids:
+    - auto layout selection
+    - query mask fallback
+    - polygon simplification
+    - Manhattan snapping
+    - rectangularisation
+    - overlap suppression
+    - duplicate-room removal
+    - wall-mask-assisted cleanup
+    """
+    valid = torch.sigmoid(pred["room_valid_logits"])[0].detach().cpu().numpy()
+    corner_valid = torch.sigmoid(pred["corner_valid_logits"])[0].detach().cpu().numpy()
+    corners = pred["corner_xy"][0].detach().cpu().numpy()
+    classes = torch.argmax(pred["room_class_logits"], dim=-1)[0].detach().cpu().numpy()
+
+    rooms: list[dict] = []
+
+    for ridx, score in enumerate(valid):
+        if float(score) < float(room_thr):
+            continue
+
+        keep = corner_valid[ridx] >= float(corner_thr)
+        pts = corners[ridx, keep]
+
+        # Same fallback as your normal extraction, but still raw:
+        # if too few corners pass the threshold, keep top 4 corners.
+        if len(pts) < 3:
+            topk = np.argsort(-corner_valid[ridx])[:4]
+            topk = np.sort(topk)
+            pts = corners[ridx, topk]
+
+        pts_px = np.clip(
+            np.round(pts * (grid_size - 1)),
+            0,
+            grid_size - 1
+        ).astype(np.int32)
+
+        if len(np.unique(pts_px, axis=0)) < 3:
+            continue
+
+        area = _polygon_area_px(pts_px)
+
+        if area < float(min_room_area_px):
+            continue
+
+        cls = int(classes[ridx])
+        rtype = ROOM_TYPES[cls] if 0 <= cls < len(ROOM_TYPES) else "other"
+
+        rooms.append({
+            "query_index": int(ridx),
+            "type": rtype,
+            "score": float(score),
+            "points_px": pts_px.tolist(),
+            "area_px": float(area),
+            "source": "raw_corner_head_no_postprocess",
+        })
+
+    return rooms
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run trained RoomToFP v7-final inference on a Structured3D scene folder.")
     ap.add_argument("--scene-dir", required=True)
@@ -2014,6 +2084,11 @@ def main() -> None:
     ap.add_argument("--include-furniture", action="store_true")
     ap.add_argument("--use-furniture-input", action="store_true")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument(
+        "--no-postprocess",
+        action="store_true",
+        help="Render raw model polygon predictions without cleanup, snapping, layout selection, mask fallback, opening extraction, or post-processing."
+    )
     args = ap.parse_args()
 
     out = Path(args.output_dir)
@@ -2107,49 +2182,73 @@ def main() -> None:
     # Instead of committing to one room/corner threshold, optionally test several
     # general threshold/snap settings and select the full layout that scores best
     # against dense wall, room and opening evidence.
-    if args.auto_select_layout:
-        rooms, layout_selection = _select_best_layout(
+    if args.no_postprocess:
+        rooms = _extract_raw_predicted_rooms(
             pred=pred,
             grid_size=args.grid_size,
-            mask_thr=args.mask_threshold,
-            min_room_area_px=args.min_room_area_px,
-            wall_prob=wall_prob,
-            opening_evidence=opening_evidence,
-            room_union_prob=room_union_prob,
-            args=args,
+            room_thr=args.room_threshold,
+            corner_thr=args.corner_threshold,
+            min_room_area_px=0.0,
         )
-    else:
-        rooms = _extract_predicted_rooms(
-            pred,
-            args.grid_size,
-            args.room_threshold,
-            args.corner_threshold,
-            args.mask_threshold,
-            min_room_area_px=args.min_room_area_px,
-            overlap_thr=args.room_overlap_threshold,
-            simplify_eps_px=args.simplify_eps_px,
-            snap_axis_thr_px=args.snap_axis_threshold_px,
-            prefer_room_masks=bool(args.prefer_room_masks),
-            wall_prob=wall_prob,
-        )
+
         layout_selection = {
             "score": None,
             "settings": {
                 "room_thr": float(args.room_threshold),
                 "corner_thr": float(args.corner_threshold),
-                "simplify": float(args.simplify_eps_px),
-                "snap": float(args.snap_axis_threshold_px),
-                "overlap": float(args.room_overlap_threshold),
-                "prefer_masks": bool(args.prefer_room_masks),
+                "postprocess": False,
+                "source": "raw_corner_head",
             },
             "num_rooms": int(len(rooms)),
             "tried": [],
         }
 
+    else:
+        if args.auto_select_layout:
+            rooms, layout_selection = _select_best_layout(
+                pred=pred,
+                grid_size=args.grid_size,
+                mask_thr=args.mask_threshold,
+                min_room_area_px=args.min_room_area_px,
+                wall_prob=wall_prob,
+                opening_evidence=opening_evidence,
+                room_union_prob=room_union_prob,
+                args=args,
+            )
+        else:
+            rooms = _extract_predicted_rooms(
+                pred,
+                args.grid_size,
+                args.room_threshold,
+                args.corner_threshold,
+                args.mask_threshold,
+                min_room_area_px=args.min_room_area_px,
+                overlap_thr=args.room_overlap_threshold,
+                simplify_eps_px=args.simplify_eps_px,
+                snap_axis_thr_px=args.snap_axis_threshold_px,
+                prefer_room_masks=bool(args.prefer_room_masks),
+                wall_prob=wall_prob,
+            )
+
+            layout_selection = {
+                "score": None,
+                "settings": {
+                    "room_thr": float(args.room_threshold),
+                    "corner_thr": float(args.corner_threshold),
+                    "simplify": float(args.simplify_eps_px),
+                    "snap": float(args.snap_axis_threshold_px),
+                    "overlap": float(args.room_overlap_threshold),
+                    "prefer_masks": bool(args.prefer_room_masks),
+                    "postprocess": True,
+                },
+                "num_rooms": int(len(rooms)),
+                "tried": [],
+            }
+
     # v7.3 improvement:
     # Optional conservative gap filling. It is disabled unless explicitly requested
     # because it can improve living-room coverage but should be checked visually.
-    if args.living_gap_fill:
+    if args.living_gap_fill and not args.no_postprocess:
         rooms = _fill_living_room_gaps(
             rooms=rooms,
             grid_size=args.grid_size,
@@ -2219,30 +2318,58 @@ def main() -> None:
         save_mask_png(room_union.max(axis=0), out / "pred_room_union_mask.png")
 
     wall_segments = _room_wall_segments(rooms, min_length_px=8.0, dedup_quant_px=4.0)
-    opening_segments = _opening_components_to_segments(
-        opening_clean,
+
+    if args.no_postprocess:
+        opening_segments = []
+    else:
+        opening_segments = _opening_components_to_segments(
+            opening_clean,
+            wall_segments,
+            min_area_px=args.min_opening_area_px,
+            min_len_px=args.min_opening_length_px,
+            snap_dist_px=args.opening_snap_distance_px,
+        )
+        # v7.4 improvement:
+        # Merge fragmented openings and remove implausibly long cyan segments after
+        # snapping them to vector walls. This makes the preview closer to the sparse
+        # Structured3D ground-truth opening style.
+        opening_segments = _merge_nearby_openings(
+            opening_segments,
+            merge_dist_px=args.merge_opening_distance_px,
+        )
+
+        opening_segments = _filter_openings_by_length_and_wall(
+            opening_segments,
+            max_wall_fraction=0.55,
+            max_abs_len_px=args.max_opening_length_px,
+        )
+
+    preview_name = "raw_no_postprocess_preview.png" if args.no_postprocess else "pred_floorplan_preview.png"
+    svg_name = "raw_no_postprocess.svg" if args.no_postprocess else "pred_floorplan.svg"
+
+    _write_vector_preview(
+        out / preview_name,
+        rooms,
         wall_segments,
-        min_area_px=args.min_opening_area_px,
-        min_len_px=args.min_opening_length_px,
-        snap_dist_px=args.opening_snap_distance_px,
+        opening_segments,
+        args.grid_size,
+        debug_mask_overlays=False if args.no_postprocess else args.debug_mask_overlays,
+        wall_mask=wall_clean,
+        opening_mask=opening_clean,
+        furniture_mask=furniture,
     )
 
-    # v7.4 improvement:
-    # Merge fragmented openings and remove implausibly long cyan segments after
-    # snapping them to vector walls. This makes the preview closer to the sparse
-    # Structured3D ground-truth opening style.
-    opening_segments = _merge_nearby_openings(
+    _write_vector_svg(
+        out / svg_name,
+        rooms,
+        wall_segments,
         opening_segments,
-        merge_dist_px=args.merge_opening_distance_px,
+        args.grid_size,
+        debug_mask_overlays=False if args.no_postprocess else args.debug_mask_overlays,
+        wall_mask=wall_clean,
+        opening_mask=opening_clean,
+        furniture_mask=furniture,
     )
-    opening_segments = _filter_openings_by_length_and_wall(
-        opening_segments,
-        max_wall_fraction=0.55,
-        max_abs_len_px=args.max_opening_length_px,
-    )
-
-    _write_vector_preview(out / "pred_floorplan_preview.png", rooms, wall_segments, opening_segments, args.grid_size, debug_mask_overlays=args.debug_mask_overlays, wall_mask=wall_clean, opening_mask=opening_clean, furniture_mask=furniture)
-    _write_vector_svg(out / "pred_floorplan.svg", rooms, wall_segments, opening_segments, args.grid_size, debug_mask_overlays=args.debug_mask_overlays, wall_mask=wall_clean, opening_mask=opening_clean, furniture_mask=furniture)
 
     metadata = {
         "scene_dir": str(scene_dir),
@@ -2263,22 +2390,30 @@ def main() -> None:
         "include_furniture_output": bool(args.include_furniture and furniture is not None),
         "use_furniture_input": bool(args.use_furniture_input),
         "prefer_room_masks": bool(args.prefer_room_masks),
-        "clean_vector_render": True,
+        "clean_vector_render": not bool(args.no_postprocess),
         "debug_mask_overlays": bool(args.debug_mask_overlays),
         "annotation_grid_used": annotation_xy is not None,
         "bev_opening_evidence_used": not bool(args.no_bev_opening_evidence),
         "bev_opening_weight": float(args.bev_opening_weight),
         "opening_threshold_used": float(opening_thr),
         "model_dims": {"in_channels": in_channels, "max_rooms": max_rooms, "max_corners": max_corners, "embed_dim": embed_dim, "room_classes": room_classes},
-        "outputs": {"preview_png": str(out / "pred_floorplan_preview.png"), "svg": str(out / "pred_floorplan.svg"), "wall_mask": str(out / "pred_wall_mask.png"), "opening_mask": str(out / "pred_opening_mask.png"), "opening_evidence_mask": str(out / "pred_opening_evidence_mask.png")},
+        "outputs": {
+            "preview_png": str(out / preview_name),
+            "svg": str(out / svg_name),
+            "wall_mask": str(out / "pred_wall_mask.png"),
+            "opening_mask": str(out / "pred_opening_mask.png"),
+            "opening_evidence_mask": str(out / "pred_opening_evidence_mask.png")
+        },
         "sources": sources,
+        "postprocess_disabled": bool(args.no_postprocess),
     }
     (out / "prediction_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(json.dumps({
         "num_predicted_rooms": len(rooms),
         "num_wall_segments": len(wall_segments),
         "num_opening_segments": len(opening_segments),
-        "clean_vector_render": True,
+        "clean_vector_render": not bool(args.no_postprocess),
+        "postprocess_disabled": bool(args.no_postprocess),
         "bev_opening_evidence_used": not bool(args.no_bev_opening_evidence),
         "auto_select_layout": bool(args.auto_select_layout),
         "layout_selection": layout_selection,
