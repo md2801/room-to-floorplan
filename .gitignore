@@ -12,3 +12,5 @@ visionscape/node_modules
 extracted
 outputs
 v1-4_artifacts
+*.csv
+*.png
