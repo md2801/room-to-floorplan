@@ -154,7 +154,7 @@ Open `http://localhost:5173` in your browser.
 **Prepare the dataset:**
 
 ```bash
-python prepare_roomtofp_dataset.py \
+python prepare_roomtofp_stru3d_dataset.py \
   --structured3d-root /path/to/Structured3D \
   --output output/data/roomtofp_polygon_v7 \
   --grid-size 512 \
