@@ -420,7 +420,9 @@ class V7DecoderLayer(nn.Module):
 # Dense mask decoder
 # Defines an FPN-style decoder for dense wall/opening/boundary/corner/room mask features.
 class V7FPNMaskDecoder(nn.Module):
-    """FPN decoder using p2/p3/p4/p5 for dense wall/opening/boundary/corner/room masks."""
+    """
+    FPN decoder using p2/p3/p4/p5 for dense wall/opening/boundary/corner/room masks.
+    """
 
     # Initializes the module and creates all layers/parameters used later in forward passes.
     def __init__(self, embed_dim: int = 256, out_dim: int = 128, dropout: float = 0.10):
