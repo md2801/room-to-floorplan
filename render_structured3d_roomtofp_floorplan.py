@@ -11,15 +11,9 @@ from PIL import Image, ImageDraw
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
-import sys
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from room_to_floorplan_helpers.floorplan_svg import clean_mask, save_mask_png
-from room_to_floorplan_helpers.geometry import save_bev_preview
-from room_to_floorplan_helpers.roomtofp_scene_utils import (
+from room_to_floorplan.floorplan_svg import clean_mask, save_mask_png
+from room_to_floorplan.geometry import save_bev_preview
+from room_to_floorplan.roomtofp_scene_utils import (
     SceneGrid,
     collect_scene_points,
     load_annotation_xy,
@@ -27,7 +21,7 @@ from room_to_floorplan_helpers.roomtofp_scene_utils import (
     stack_roomtofp_observation,
     world_xy_to_pixels,
 )
-from room_to_floorplan_helpers.structured3d import FURNITURE_IDS
+from room_to_floorplan.structured3d import FURNITURE_IDS
 
 ROOM_COLORS = {
     "living room": "#f6d365",

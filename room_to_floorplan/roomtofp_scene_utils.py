@@ -17,9 +17,9 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from room_to_floorplan_helpers.floorplan_svg import clean_mask
-from room_to_floorplan_helpers.geometry import norm01, panorama_depth_to_world
-from room_to_floorplan_helpers.structured3d import FURNITURE_IDS
+from room_to_floorplan.floorplan_svg import clean_mask
+from room_to_floorplan.geometry import norm01, panorama_depth_to_world
+from room_to_floorplan.structured3d import FURNITURE_IDS
 
 # Structured3D semantic IDs used by this project.
 # The old code grouped floor/ceiling/wall/door/window into one "structure" channel.

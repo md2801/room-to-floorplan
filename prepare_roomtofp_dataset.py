@@ -22,7 +22,7 @@ from shapely.geometry import GeometryCollection, LineString, MultiLineString, Mu
 from shapely.ops import polygonize, unary_union
 
 from render_structured3d_roomtofp_floorplan import build_roomtofp_scene_outputs
-from room_to_floorplan_helpers.roomtofp_scene_utils import (
+from room_to_floorplan.roomtofp_scene_utils import (
     collect_scene_points,
     load_annotation_xy,
     make_scene_bev,
@@ -88,15 +88,10 @@ OBSERVATION_CHANNEL_ORDER = [
     "rgb_r",
     "rgb_g",
     "rgb_b",
-    "observed_corner_prior",
-    "distance_to_observed_wall",
 ]
 
 
-# ============================================================
 # IO helpers
-# ============================================================
-
 def extract_zips(zip_paths: list[str], extract_root: Path) -> Path:
     extract_root.mkdir(parents=True, exist_ok=True)
 
@@ -146,10 +141,7 @@ def load_annotation(scene_dir: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-# ============================================================
 # Numeric / geometry helpers
-# ============================================================
-
 def normalize01(arr: np.ndarray) -> np.ndarray:
     arr = np.asarray(arr, dtype=np.float32)
 
@@ -607,57 +599,43 @@ def ensure_hwc_observation(obs: np.ndarray) -> np.ndarray:
     if obs.ndim != 3:
         raise ValueError(f"Expected observation to be 3D, got shape {obs.shape}")
 
+    # improvement v9-to-v7-compat: keep support for reading either old 8-channel or
+    # experimental 10-channel arrays, but the prepared sample below is always saved
+    # as V7-compatible 8-channel input.
     if obs.shape[0] in (8, 10) and obs.shape[-1] not in (8, 10):
         obs = np.transpose(obs, (1, 2, 0))
 
     return obs.astype(np.float32)
 
 
-def build_v9_observation(
-    obs8: np.ndarray,
-    observed_corner_prior: np.ndarray,
-    distance_to_observed_wall: np.ndarray,
-) -> np.ndarray:
+def build_v7_compatible_observation(obs: np.ndarray) -> np.ndarray:
     """
-    Extend 8-channel observed BEV into 10-channel V9 observed BEV.
+    Return the V7-compatible 8-channel observed BEV input.
 
-    No GT channels are allowed here.
+    Channel order:
+        0 occupancy
+        1 wall
+        2 floor
+        3 opening
+        4 furniture or zero
+        5 rgb_r
+        6 rgb_g
+        7 rgb_b
+
+    Important:
+        The V9 observed corner prior and distance-to-observed-wall map are still
+        computed and saved separately, but they are NOT concatenated into the
+        model input. This keeps the dataset compatible with the V7 model.
     """
-    obs8 = ensure_hwc_observation(obs8)
+    obs = ensure_hwc_observation(obs)
 
-    if obs8.shape[-1] < 8:
-        raise ValueError(f"Expected at least 8 observation channels, got {obs8.shape}")
+    if obs.shape[-1] < 8:
+        raise ValueError(f"Expected at least 8 observation channels, got {obs.shape}")
 
-    if obs8.shape[-1] > 8:
-        obs8 = obs8[..., :8]
+    if obs.shape[-1] > 8:
+        obs = obs[..., :8]
 
-    ch = np.asarray(observed_corner_prior, dtype=np.float32)
-    dt = np.asarray(distance_to_observed_wall, dtype=np.float32)
-
-    if ch.ndim == 3:
-        ch = ch[0]
-
-    if dt.ndim == 3:
-        dt = dt[0]
-
-    h, w = obs8.shape[:2]
-
-    if ch.shape != (h, w):
-        ch = cv2.resize(ch, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.float32)
-
-    if dt.shape != (h, w):
-        dt = cv2.resize(dt, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.float32)
-
-    obs10 = np.concatenate(
-        [
-            obs8.astype(np.float32),
-            np.clip(ch, 0.0, 1.0)[..., None].astype(np.float32),
-            np.clip(dt, 0.0, 1.0)[..., None].astype(np.float32),
-        ],
-        axis=-1,
-    )
-
-    return obs10.astype(np.float32)
+    return np.clip(obs, 0.0, 1.0).astype(np.float32)
 
 
 # ============================================================
@@ -1172,7 +1150,7 @@ def load_preview_outputs(
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Prepare clean RoomToFP V9 polygon training data from Structured3D scenes."
+        description="Prepare clean RoomToFP V9 polygon targets with V7-compatible 8-channel input from Structured3D scenes."
     )
 
     ap.add_argument(
@@ -1406,13 +1384,13 @@ def main() -> None:
 
             distance_to_wall_target = make_distance_transform(wall_mask)
 
-            obs10 = build_v9_observation(
-                obs8=obs8,
-                observed_corner_prior=input_corner_prior,
-                distance_to_observed_wall=input_distance_to_wall,
-            )
+            # improvement v9-to-v7-compat: keep the cleaned V9 targets, but save
+            # the actual model input as the original V7 8-channel BEV.
+            # The input-derived corner prior and distance map stay as separate
+            # optional arrays below; they are not part of bev/observation.
+            obs8 = build_v7_compatible_observation(obs8)
 
-            bev_chw = np.transpose(obs10, (2, 0, 1)).astype(np.float32)
+            bev_chw = np.transpose(obs8, (2, 0, 1)).astype(np.float32)
 
             room_mask_merged = np.clip(np.sum(room_masks, axis=0), 0.0, 1.0).astype(np.float32)
 
@@ -1421,9 +1399,9 @@ def main() -> None:
             np.savez_compressed(
                 sample_path,
 
-                # Standard V9 input.
+                # V7-compatible input with V9-clean targets.
                 bev=bev_chw.astype(np.float32),
-                observation=obs10.astype(np.float32),
+                observation=obs8.astype(np.float32),
 
                 # Sparse auxiliary targets.
                 polygon_xy=corners.astype(np.float32),
@@ -1432,9 +1410,9 @@ def main() -> None:
                 room_class=room_class.astype(np.int64),
                 room_area=room_area.astype(np.float32),
 
-                # Dense V9 polygon targets.
-                boundary_64=boundary_64.astype(np.float32),
-                boundary_128=boundary_128.astype(np.float32),
+                # # Dense V9 polygon targets.
+                # boundary_64=boundary_64.astype(np.float32),
+                # boundary_128=boundary_128.astype(np.float32),
 
                 # Dense masks.
                 furniture_mask=furniture_mask.astype(np.float32),
@@ -1450,9 +1428,9 @@ def main() -> None:
                 corner_heatmap=gt_corner_heatmap.astype(np.float32),
                 distance_to_wall_target=distance_to_wall_target[None, ...].astype(np.float32),
 
-                # Input-derived priors.
-                input_corner_prior=input_corner_prior[None, ...].astype(np.float32),
-                distance_to_wall=input_distance_to_wall[None, ...].astype(np.float32),
+                # # Input-derived priors.
+                # input_corner_prior=input_corner_prior[None, ...].astype(np.float32),
+                # distance_to_wall=input_distance_to_wall[None, ...].astype(np.float32),
 
                 # Metadata.
                 has_opening_supervision=has_opening_supervision,
@@ -1477,7 +1455,7 @@ def main() -> None:
                     ),
                     "include_furniture": bool(args.include_furniture),
                     "furniture_source": metadata.get("furniture_source", args.furniture_source),
-                    "observation_channels": int(obs10.shape[-1]),
+                    "observation_channels": int(obs8.shape[-1]),
                     "bev_channels": int(bev_chw.shape[0]),
                     "has_opening_supervision": True,
                     "source": "structured3d",
@@ -1544,8 +1522,8 @@ def main() -> None:
     )
 
     metadata = {
-        "dataset": "Structured3D RoomToFP V9",
-        "version": "roomtofp_v9_clean_graph_polygon_targets",
+        "dataset": "Structured3D RoomToFP V9-clean targets / V7-compatible input",
+        "version": "roomtofp_v9_clean_graph_polygon_targets_v7_8ch_input",
         "room_types": ROOM_TYPES,
         "parser": "annotation_graph_polygonize",
         "parser_note": (
@@ -1556,8 +1534,8 @@ def main() -> None:
         "observation_channel_order": OBSERVATION_CHANNEL_ORDER,
         "bev_layout": "channel_first",
         "observation_layout": "channel_last",
-        "observation_channels": 10,
-        "bev_channels": 10,
+        "observation_channels": 8,
+        "bev_channels": 8,
         "include_furniture": bool(args.include_furniture),
         "split_seed": int(args.split_seed),
         "grid_size": int(args.grid_size),
@@ -1578,12 +1556,12 @@ def main() -> None:
             "5": "rgb_r",
             "6": "rgb_g",
             "7": "rgb_b",
-            "8": "observed_corner_prior_not_gt",
-            "9": "distance_to_observed_wall_not_gt",
         },
         "target_notes": {
             "corner_heatmap": "GT target only, not inserted into bev input.",
             "distance_to_wall_target": "GT target only, not inserted into bev input.",
+            "input_corner_prior": "Input-derived optional array, saved separately, not inserted into bev input.",
+            "distance_to_wall": "Input-derived optional array, saved separately, not inserted into bev input.",
             "wall_mask": "GT wall target from renderer.",
             "opening_mask": "GT opening target from renderer.",
             "room_masks": "GT per-room masks from graph-polygonized room footprints.",

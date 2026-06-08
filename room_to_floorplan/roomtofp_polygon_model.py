@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """
-RoomToFP v9 model.
+RoomToFP v7 model.
 
 Major v7 upgrades:
 - Improvement v7: ResNet/FPN-style stronger BEV backbone.
@@ -9,11 +9,8 @@ Major v7 upgrades:
 - Improvement v7: pure-PyTorch lightweight multi-scale deformable-style cross attention.
 - Improvement v7: iterative coordinate refinement for polygon corners.
 - Improvement v7: optional denoising polygon refinement branch used during training.
-- Improvement v9: accepts 10-channel BEV input from the corrected V9 preprocessing pipeline
-- Improvement v9: adds a dense boundary-sequence decoder for boundary_64 and boundary_128 targets
-- Improvement v9: adds a distance-to-wall auxiliary dense prediction head
 
-The class name remains RoomToFPPolygonNet so existing training/inference imports keep working
+The class name remains RoomToFPPolygonNet so existing training/inference imports keep working.
 """
 
 import math
@@ -164,7 +161,7 @@ class ResNetFPNEncoder(nn.Module):
     """
     Improvement v7: stronger ResNet/FPN encoder.
 
-    Input Bx10x512x512 -> multi-scale FPN maps:
+    Input Bx8x512x512 -> multi-scale FPN maps:
       p2: BxCx128x128
       p3: BxCx64x64
       p4: BxCx32x32
@@ -174,16 +171,16 @@ class ResNetFPNEncoder(nn.Module):
     """
 
     # Initializes the module and creates all layers/parameters used later in forward passes.
-    def __init__(self, in_channels: int = 10, base: int = 48, embed_dim: int = 256, dropout: float = 0.10):
+    def __init__(self, in_channels: int = 8, base: int = 48, embed_dim: int = 256, dropout: float = 0.10):
         # Initializes the parent nn.Module so PyTorch can register layers and parameters correctly.
         super().__init__()
         # Stores the shared internal feature dimension.
         self.embed_dim = int(embed_dim)
         # Converts the base CNN width to an integer channel count.
         b = int(base)
-        # Improvement v9: creates the initial CNN stem that downsamples the 10-channel BEV input
+        # Creates the initial CNN stem that downsamples the 8-channel BEV input.
         self.stem = nn.Sequential(
-            # Improvement v9: maps the configurable BEV input channels to the base CNN width using a 7x7 stride-2 convolution
+            # Maps the BEV input channels to the base CNN width using a 7x7 stride-2 convolution.
             nn.Conv2d(in_channels, b, 7, stride=2, padding=3, bias=False),  # 256x256
             # Normalizes the stem feature channels.
             nn.BatchNorm2d(b),
@@ -467,21 +464,20 @@ class V7FPNMaskDecoder(nn.Module):
 # Defines the full RoomToFP v7 network used by training and inference.
 class RoomToFPPolygonNet(nn.Module):
     """
-    RoomToFP v9 network.
+    RoomToFP v7 network.
 
     Keeps the existing output dictionary keys used by training/inference:
       room_valid_logits, room_class_logits, corner_valid_logits, corner_xy,
       wall_logits, opening_logits, room_mask_logits, boundary_logits,
-      corner_heatmap_logits, optional furniture_logits, aux_outputs, dn_outputs,
-      boundary64_xy, boundary128_xy, boundary_point_valid_logits, distance_logits.
+      corner_heatmap_logits, optional furniture_logits, aux_outputs, dn_outputs.
     """
 
     # Initializes the module and creates all layers/parameters used later in forward passes.
     def __init__(
         # Continues the current multi-line statement or argument list.
         self,
-        # Improvement v9: number of input BEV channels, normally 10 for occupancy/wall/floor/opening/furniture/RGB plus observed corner prior and distance-to-observed-wall
-        in_channels: int = 10,
+        # Number of input BEV channels, normally 8 for occupancy/wall/floor/opening/furniture/RGB.
+        in_channels: int = 8,
         # Maximum number of room queries predicted per scene.
         max_rooms: int = 20,
         # Maximum number of polygon corner slots per room.
@@ -508,10 +504,6 @@ class RoomToFPPolygonNet(nn.Module):
         transformer_encoder_layers: int = 2,
         # Number of sampled points per level/head in deformable-style attention.
         deform_points: int = 4,
-        # Improvement v9: number of dense boundary sequence points predicted per room
-        max_boundary_points: int = 128,
-        # Improvement v9: number of decoder layers used for dense boundary sequence prediction
-        boundary_decoder_layers: int = 3,
         # Accepts and ignores extra config arguments so older scripts do not break.
         **_: object,
     ):
@@ -523,8 +515,6 @@ class RoomToFPPolygonNet(nn.Module):
         self.max_rooms = int(max_rooms)
         # Stores maximum polygon corner count.
         self.max_corners = int(max_corners)
-        # Improvement v9: stores maximum dense boundary point count used for boundary_128 supervision
-        self.max_boundary_points = int(max_boundary_points)
         # Stores the shared internal feature dimension.
         self.embed_dim = int(embed_dim)
         # Stores number of room classes.
@@ -585,22 +575,6 @@ class RoomToFPPolygonNet(nn.Module):
         # Creates one coordinate-delta head per corner refinement layer.
         self.corner_delta_heads = nn.ModuleList([MLP(embed_dim, embed_dim, 2, 3) for _ in range(int(corner_decoder_layers))])
 
-        # Improvement v9: creates learnable dense boundary point queries used to predict boundary_128-style room outlines
-        self.boundary_queries = nn.Embedding(max_boundary_points, embed_dim)
-        # Improvement v9: predicts initial dense boundary reference points before iterative boundary refinement
-        self.boundary_init_ref = MLP(embed_dim, embed_dim, 2, 3)
-        # Improvement v9: builds a separate dense boundary decoder so boundary_128 supervision does not overload the sparse corner decoder
-        self.boundary_decoder = nn.ModuleList([
-            # Improvement v9: each layer refines boundary point tokens using scene features and current boundary references
-            V7DecoderLayer(embed_dim, num_heads, dropout, num_levels=4, num_points=deform_points)
-            # Improvement v9: repeats decoder layer creation for the configured number of boundary decoder layers
-            for _ in range(int(boundary_decoder_layers))
-        ])
-        # Improvement v9: creates one coordinate-delta head per dense boundary refinement layer
-        self.boundary_delta_heads = nn.ModuleList([MLP(embed_dim, embed_dim, 2, 3) for _ in range(int(boundary_decoder_layers))])
-        # Improvement v9: predicts whether each dense boundary point slot is valid
-        self.boundary_valid_head = MLP(embed_dim, embed_dim, 1, 3)
-
         # Predicts whether each room query corresponds to a real room.
         self.room_valid_head = MLP(embed_dim, embed_dim, 1, 3)
         # Predicts the room type/class for each room query.
@@ -618,8 +592,6 @@ class RoomToFPPolygonNet(nn.Module):
         self.boundary_head = nn.Conv2d(mask_dim, 1, 1)
         # Dense 1x1 head for corner heatmap logits.
         self.corner_heatmap_head = nn.Conv2d(mask_dim, 1, 1)
-        # Improvement v9: dense 1x1 head for distance-to-wall regression logits
-        self.distance_head = nn.Conv2d(mask_dim, 1, 1)
         # Converts room query features into mask embeddings for query-conditioned room masks.
         self.room_mask_embed = MLP(embed_dim, embed_dim, mask_dim, 3)
         # Optional furniture mask head, disabled unless predict_furniture=True.
@@ -734,78 +706,6 @@ class RoomToFPPolygonNet(nn.Module):
         # Returns final corner tokens, final corner coordinates and auxiliary decoder outputs.
         return tokens.view(b, m, n, c), ref.view(b, m, n, 2), aux
 
-    # Improvement v9: resamples any predicted dense boundary sequence to 64 points for boundary_64 supervision
-    def _boundary_to_64(self, boundary_xy: torch.Tensor) -> torch.Tensor:
-        # Reads batch size, number of rooms, sequence length and xy dimension.
-        b, m, p, d = boundary_xy.shape
-        # Returns the sequence unchanged when it already has 64 points.
-        if p == 64:
-            return boundary_xy
-        # Uses every second point when the native prediction is boundary_128.
-        if p == 128:
-            return boundary_xy[:, :, ::2, :]
-        # Flattens batch and room dimensions so PyTorch can interpolate the boundary sequence.
-        seq = boundary_xy.reshape(b * m, p, d).transpose(1, 2)
-        # Linearly resamples the point sequence to 64 points for compatibility with boundary_64 targets.
-        seq64 = F.interpolate(seq, size=64, mode="linear", align_corners=False)
-        # Restores the tensor to B x rooms x 64 x 2 format.
-        return seq64.transpose(1, 2).reshape(b, m, 64, d)
-
-    # Improvement v9: decodes dense room boundary sequences for each room query
-    def _decode_boundary(self, room_tokens: torch.Tensor, room_ref: torch.Tensor, multi_feats: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[dict]]:
-        # Reads batch size, number of room queries and feature dimension.
-        b, m, c = room_tokens.shape
-        # Stores the number of dense boundary point slots per room.
-        n = self.max_boundary_points
-        # Reshapes learnable boundary queries so they can be added to every room token.
-        boundary_base = self.boundary_queries.weight.view(1, 1, n, c)
-        # Combines each room token with each boundary query to create room-specific boundary tokens.
-        tokens = room_tokens.unsqueeze(2) + boundary_base
-        # Flattens room-boundary tokens into one sequence for the decoder.
-        tokens = tokens.reshape(b, m * n, c)
-        # Predicts initial normalized boundary reference coordinates.
-        init_ref = torch.sigmoid(self.boundary_init_ref(tokens))
-        # Repeats each room reference point for all dense boundary slots in that room.
-        room_ref_flat = room_ref.unsqueeze(2).expand(b, m, n, 2).reshape(b, m * n, 2)
-        # Initializes boundary references mostly near the room reference for stability.
-        ref = (0.65 * room_ref_flat + 0.35 * init_ref).clamp(0.0, 1.0)
-
-        # Improvement v9: stores intermediate dense boundary decoder outputs for auxiliary training losses
-        aux: list[dict] = []
-        # Runs each boundary decoder layer and saves its intermediate prediction.
-        for li, layer in enumerate(self.boundary_decoder):
-            # Updates boundary tokens using scene features sampled around current references.
-            tokens = layer(tokens, multi_feats, ref)
-            # Predicts coordinate offsets for iterative dense boundary refinement.
-            delta = self.boundary_delta_heads[li](tokens)
-            # Applies coordinate refinement in logit space and maps back to [0, 1].
-            ref = torch.sigmoid(inverse_sigmoid(ref) + delta)
-            # Reshapes refined references into room-by-boundary-point coordinate tensors.
-            boundary128_xy = ref.view(b, m, n, 2)
-            # Reshapes boundary tokens back into B x rooms x boundary points x C.
-            btok = tokens.view(b, m, n, c)
-            # Improvement v9: stores this decoder layer prediction for dense boundary auxiliary supervision
-            aux.append({
-                # Improvement v9: stores predicted 128-point dense boundary coordinates
-                "boundary128_xy": boundary128_xy,
-                # Improvement v9: stores predicted 64-point dense boundary coordinates derived from the dense sequence
-                "boundary64_xy": self._boundary_to_64(boundary128_xy),
-                # Improvement v9: stores logits indicating which dense boundary point slots are valid
-                "boundary_point_valid_logits": self.boundary_valid_head(btok).squeeze(-1),
-                # Stores logits indicating which room queries are real rooms.
-                "room_valid_logits": self.room_valid_head(room_tokens).squeeze(-1),
-                # Stores room type/class logits.
-                "room_class_logits": self.class_head(room_tokens),
-            })
-        # Reshapes final dense boundary tokens back into B x rooms x boundary points x C.
-        boundary_tokens = tokens.view(b, m, n, c)
-        # Reshapes final dense boundary references back into B x rooms x boundary points x 2.
-        boundary128_xy = ref.view(b, m, n, 2)
-        # Improvement v9: creates a 64-point boundary prediction for direct boundary_64 loss
-        boundary64_xy = self._boundary_to_64(boundary128_xy)
-        # Returns final boundary tokens, 128-point boundary, 64-point boundary and auxiliary outputs.
-        return boundary_tokens, boundary128_xy, boundary64_xy, aux
-
     # Runs the training-only denoising branch that refines noisy ground-truth polygons.
     def _decode_denoising(self, dn_polygon_xy: torch.Tensor, dn_corner_valid: torch.Tensor, dn_room_valid: torch.Tensor, multi_feats: list[torch.Tensor]) -> dict:
         # Reads the denoising polygon tensor shape.
@@ -868,10 +768,8 @@ class RoomToFPPolygonNet(nn.Module):
         multi_feats = self._encode_memory(feats)
         # Decodes room queries into room-level features and reference points.
         room_tokens, room_ref = self._decode_rooms(multi_feats, b)
-        # Decodes room-specific corner tokens into sparse polygon corner coordinates.
+        # Decodes room-specific corner tokens into polygon coordinates.
         corner_tokens, corner_xy, aux_outputs = self._decode_corners(room_tokens, room_ref, multi_feats)
-        # Improvement v9: decodes room-specific dense boundary sequences for boundary_64 and boundary_128 supervision
-        boundary_tokens, boundary128_xy, boundary64_xy, boundary_aux_outputs = self._decode_boundary(room_tokens, room_ref, multi_feats)
 
         # Builds the high-resolution dense mask feature map.
         mask_feat = self.mask_decoder(feats, target_size=(h, w))
@@ -890,12 +788,6 @@ class RoomToFPPolygonNet(nn.Module):
             "corner_valid_logits": self.corner_valid_head(corner_tokens).squeeze(-1),
             # Stores predicted polygon corner coordinates.
             "corner_xy": corner_xy,
-            # Improvement v9: stores predicted 128-point dense room boundary coordinates
-            "boundary128_xy": boundary128_xy,
-            # Improvement v9: stores predicted 64-point dense room boundary coordinates
-            "boundary64_xy": boundary64_xy,
-            # Improvement v9: stores logits indicating which dense boundary point slots are valid
-            "boundary_point_valid_logits": self.boundary_valid_head(boundary_tokens).squeeze(-1),
             # Stores refined room reference points for debugging or inference support.
             "room_reference_xy": room_ref,
             # Stores dense wall mask logits.
@@ -906,14 +798,10 @@ class RoomToFPPolygonNet(nn.Module):
             "boundary_logits": self.boundary_head(mask_feat),
             # Stores dense corner heatmap logits.
             "corner_heatmap_logits": self.corner_heatmap_head(mask_feat),
-            # Improvement v9: stores dense distance-to-wall logits for distance_to_wall_target supervision
-            "distance_logits": self.distance_head(mask_feat),
             # Stores query-conditioned per-room mask logits.
             "room_mask_logits": room_mask_logits,
             # Stores auxiliary decoder predictions from earlier corner refinement layers.
             "aux_outputs": aux_outputs[:-1],
-            # Improvement v9: stores auxiliary dense boundary decoder predictions from earlier boundary refinement layers
-            "boundary_aux_outputs": boundary_aux_outputs[:-1],
         }
         # Adds optional furniture mask prediction when that head exists.
         if self.furniture_head is not None:

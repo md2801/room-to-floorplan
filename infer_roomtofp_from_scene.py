@@ -43,9 +43,9 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
-from room_to_floorplan_helpers.floorplan_svg import save_mask_png
-from room_to_floorplan_helpers.roomtofp_polygon_model import RoomToFPPolygonNet
-from room_to_floorplan_helpers.roomtofp_scene_utils import (
+from room_to_floorplan.floorplan_svg import save_mask_png
+from room_to_floorplan.roomtofp_polygon_model import RoomToFPPolygonNet
+from room_to_floorplan.roomtofp_scene_utils import (
     collect_scene_points,
     load_annotation_xy,
     make_scene_bev,

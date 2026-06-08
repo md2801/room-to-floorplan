@@ -14,6 +14,3 @@ outputs
 v1-4_artifacts
 *.csv
 *.png
-gui/node_modules
-room_to_floorplan_helpers/.ipynb_checkpoints
-room_to_floorplan_helpers/old_unet
