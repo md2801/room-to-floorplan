@@ -246,7 +246,7 @@ class RoomToFPNPZDataset(Dataset):
 
         for key in [
             "wall_mask", "opening_mask", "furniture_mask",
-            "boundary_mask", "corner_heatmap", "room_mask", "room_masks",
+            "boundary_mask", "corner_heatmap", "room_mask",
         ]:
             if key in s:
                 s[key] = np.flip(s[key], axis=-1).copy()
@@ -264,7 +264,7 @@ class RoomToFPNPZDataset(Dataset):
 
         for key in [
             "wall_mask", "opening_mask", "furniture_mask",
-            "boundary_mask", "corner_heatmap", "room_mask", "room_masks",
+            "boundary_mask", "corner_heatmap", "room_mask",
         ]:
             if key in s:
                 s[key] = np.flip(s[key], axis=-2).copy()
@@ -347,20 +347,7 @@ class RoomToFPNPZDataset(Dataset):
         opening_mask = ensure_chw_mask_np(np.clip(s["opening_mask"], 0.0, 1.0), "opening_mask")
         boundary_mask = ensure_chw_mask_np(np.clip(s["boundary_mask"], 0.0, 1.0), "boundary_mask")
         corner_heatmap = ensure_chw_mask_np(np.clip(s["corner_heatmap"], 0.0, 1.0), "corner_heatmap")
-        if "room_masks" in s:
-            room_mask = np.asarray(s["room_masks"], dtype=np.float32)
-            room_mask = np.clip(room_mask, 0.0, 1.0)
-
-            if room_mask.ndim != 3:
-                raise ValueError(f"room_masks must be [max_rooms, H, W], got {room_mask.shape}")
-
-        else:
-            # Fallback only for old datasets.
-            # This repeats the merged room mask for every room, but should not be used
-            # when proper per-room masks are available.
-            merged = ensure_chw_mask_np(np.clip(s["room_mask"], 0.0, 1.0), "room_mask")
-            max_rooms = int(s["polygon_xy"].shape[0])
-            room_mask = np.repeat(merged[:1], max_rooms, axis=0).astype(np.float32)
+        room_mask = ensure_chw_mask_np(np.clip(s["room_mask"], 0.0, 1.0), "room_mask")
 
         if "furniture_mask" in s:
             furniture_mask = ensure_chw_mask_np(np.clip(s["furniture_mask"], 0.0, 1.0), "furniture_mask")
@@ -1775,7 +1762,7 @@ def main() -> None:
             scheduler = None
 
     amp = bool(args.amp and str(args.device).startswith("cuda"))
-    scaler = torch.amp.GradScaler("cuda", enabled=amp) if amp else None
+    scaler = torch.cuda.amp.GradScaler(enabled=amp) if amp else None
 
     bad_epochs = 0
     unfrozen = args.freeze_backbone_epochs <= 0
