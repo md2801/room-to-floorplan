@@ -240,3 +240,16 @@ python visualize_roomtofp_predictions.py \
 - Integrate a 3D viewer alongside the 2D floorplan output
 - Add user authentication and a results history panel
 - Containerise the full stack with Docker for easier deployment
+
+---
+
+## Acknowledgements
+
+VisionScape builds upon prior research and datasets, including **RoomFormer** and the **Structured3D** dataset.
+
+- The floorplan generation pipeline is inspired by and derived from concepts introduced in RoomFormer, including transformer-based approaches for structured floorplan reconstruction.
+- Training and evaluation data are based on the Structured3D dataset, which provides annotated 3D indoor scenes used for model development.
+
+This repository contains the VisionScape application, including the frontend interface, backend API, inference pipeline, model integration, and custom modifications developed for this project.
+
+---
